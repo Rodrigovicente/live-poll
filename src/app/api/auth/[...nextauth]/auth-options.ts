@@ -7,6 +7,7 @@ const authOptions = {
 			clientSecret: process.env.TWITCH_CLIENT_SECRET!,
 		}),
 	],
+	secret: process.env.NEXTAUTH_SECRET,
 }
 
 export default authOptions
