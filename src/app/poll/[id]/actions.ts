@@ -1,15 +1,17 @@
+'use server'
 import { ApiResponse } from '@/app/api/utils'
 import { PollData } from './page'
 import { revalidatePath } from 'next/cache'
-import pool from '@/lib/db'
+import { createVote, getPollDataWithVotes } from '@/lib/db/queries/poll'
+import PollForm from './components/poll-form'
+import { getServerSession, Session } from 'next-auth'
+import authOptions from '@/app/api/auth/[...nextauth]/auth-options'
+import { redirect } from 'next/navigation'
 
-export const fetchCache = 'force-no-store'
-
-export async function getPoll(
-	identifier: string
+export async function getPollWithVotes(
+	identifier: string,
+	userId?: string
 ): Promise<ApiResponse<PollData>> {
-	'use server'
-
 	console.log('getting poll ' + identifier)
 	try {
 		revalidatePath(`/poll/${identifier}`)
@@ -18,13 +20,9 @@ export async function getPoll(
 	}
 
 	try {
-		const queryRes = await pool.query(
-			`
-				SELECT identifier, title, description, is_multiple, allow_new_options, ends_at, is_closed, created_at, index, text
-				FROM "Poll" INNER JOIN "PollOption" ON "Poll".id = "PollOption".poll_id WHERE identifier = $1
-			`,
-			[identifier]
-		)
+		const queryRes = await getPollDataWithVotes(identifier, userId)
+
+		if (!queryRes) throw new Error('Failed to fetch poll data with votes.')
 
 		console.log('===>>', queryRes.rows)
 
@@ -66,4 +64,26 @@ export async function getPoll(
 			},
 		}
 	}
+}
+
+export async function votePoll(identifier: string, data: PollForm) {
+	const session: (Session & { userId: string }) | null = await getServerSession(
+		authOptions
+	)
+	const userId = session?.userId
+
+	if (!userId) return redirect('/')
+
+	console.log('SESSION ..:', session)
+
+	let votedOptions
+
+	if (typeof data.votedOptions === 'string')
+		votedOptions = Number(data.votedOptions)
+	else
+		votedOptions = data.votedOptions
+			.map((v, i) => (v ? i : null))
+			.filter(v => v !== null)
+
+	createVote(identifier, userId, votedOptions)
 }

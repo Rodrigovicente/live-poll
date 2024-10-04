@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import React from 'react'
 import PollForm from './components/poll-form'
-import { getPoll } from './actions'
+import { getPollWithVotes } from './actions'
 import Link from 'next/link'
 import { ApiResponse } from '@/app/api/utils'
 import { Button } from '@/components/ui/button'
@@ -24,7 +24,7 @@ export type PollData = {
 }
 
 async function PollPage({ params: { id } }: { params: { id: string } }) {
-	const pollData: ApiResponse<PollData> = await getPoll(id)
+	const pollData: ApiResponse<PollData> = await getPollWithVotes(id)
 
 	if (!pollData || !pollData.success) return <div>Poll not found</div>
 	return (

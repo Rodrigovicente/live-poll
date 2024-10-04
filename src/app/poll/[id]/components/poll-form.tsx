@@ -21,6 +21,8 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { createVote } from '@/lib/db/queries/poll'
+import { votePoll } from '../actions'
 
 const PollSchema = object({
 	votedOptions: union([array(boolean()), string()]),
@@ -59,6 +61,10 @@ export function PollForm({ pollData }: { pollData: PollData }) {
 
 	function onSubmit(data: PollForm) {
 		console.log(data)
+
+		const res = votePoll(pollData.identifier, data)
+
+		console.log(res)
 	}
 
 	let OptionList: React.ReactNode
@@ -149,7 +155,7 @@ export function PollForm({ pollData }: { pollData: PollData }) {
 					</div>
 				)}
 
-				<Button type="submit">Submit</Button>
+				<Button type="submit">Vote</Button>
 			</form>
 		</div>
 	)

@@ -1,23 +1,13 @@
 'use server'
 
 import { ApiResponse } from '@/app/api/utils'
-import pool from '@/lib/db'
+import pool from '@/lib/db/db'
+import { createPoll, CreatePollParams } from '@/lib/db/queries/poll'
 import { nanoid } from '@/lib/utils'
 import pgFormat from 'pg-format'
 
-export type NewPoll = {
-	title: string
-	options: {
-		optionText: string
-	}[]
-	description: string
-	isMultiple: boolean
-	allowNewOptions: boolean
-	endsAt: Date
-}
-
-export async function createPoll(
-	newPollData: NewPoll
+export async function createNewPoll(
+	newPollData: CreatePollParams
 ): Promise<ApiResponse<any>> {
 	console.log(newPollData)
 
@@ -73,8 +63,10 @@ export async function createPoll(
 	})
 
 	// check if has repeated options
-	const options = newPollData.options.map(option => option.optionText)
-	if (new Set(options).size !== options.length) {
+	if (
+		new Set(newPollData.options.map(option => option.optionText)).size !==
+		newPollData.options.length
+	) {
 		return {
 			success: false,
 			error: {
@@ -84,41 +76,9 @@ export async function createPoll(
 	}
 
 	try {
-		const sqlOptionsInsert = pgFormat(
-			`
-			INSERT INTO "PollOption" (poll_id, index, text) SELECT "poll_id", "index", "text" FROM ((%s) AS "options_data" CROSS JOIN "insert_poll") RETURNING "poll_id";
-			`,
-			options
-				.map(
-					(option, index) =>
-						(index === 0 ? '' : 'UNION ALL ') +
-						pgFormat('SELECT %s AS "index", %L AS "text"', index, option)
-				)
-				.join(' ')
-		)
+		const queryRes = await createPoll(newPollData)
 
-		console.log('->->', sqlOptionsInsert)
-
-		const queryRes = await pool.query(
-			`
-				WITH "insert_poll" AS (
-					INSERT INTO "Poll" (identifier, title, description, is_multiple, is_closed, allow_new_options, ends_at)
-					SELECT $1, $2, $3, $4, $5, $6, $7
-					WHERE (SELECT COUNT(*) FROM "Poll" WHERE "is_closed" = false) < 3 RETURNING "id" AS "poll_id"
-				)
-
-				${sqlOptionsInsert}
-			`,
-			[
-				identifier,
-				newPollData.title,
-				newPollData.description,
-				newPollData.isMultiple,
-				false,
-				newPollData.allowNewOptions,
-				newPollData.endsAt,
-			]
-		)
+		if (!queryRes) throw new Error('Failed to create poll.')
 
 		console.log('===>>', queryRes.fields[0])
 

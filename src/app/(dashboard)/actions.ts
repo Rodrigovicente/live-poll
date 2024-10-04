@@ -1,6 +1,6 @@
-import pool from '@/lib/db'
 import { PollCardData } from '@/components/poll-card'
 import { ApiResponse } from '../api/utils'
+import { getPollList } from '@/lib/db/queries/poll'
 
 export async function getPollCardList(): Promise<
 	ApiResponse<PollCardData[] | null>
@@ -11,12 +11,9 @@ export async function getPollCardList(): Promise<
 	await new Promise(resolve => setTimeout(resolve, 1000))
 
 	try {
-		const queryRes = await pool.query(
-			`
-				SELECT identifier, title, description, is_multiple, ends_at, is_closed, created_at
-				FROM "Poll"
-			`
-		)
+		const queryRes = await getPollList()
+
+		if (!queryRes) throw new Error('Failed to fetch poll list.')
 
 		console.log('===>>', queryRes.rows)
 

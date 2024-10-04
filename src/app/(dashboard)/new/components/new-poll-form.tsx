@@ -31,9 +31,10 @@ import {
 	transform,
 	unknown,
 } from 'valibot'
-import { createPoll, NewPoll } from './actions'
+import { createNewPoll } from './actions'
 import { DialogComponent } from '@/components/ui/dialog'
 import PollCreated from './poll-created'
+import { CreatePollParams } from '@/lib/db/queries/poll'
 
 const MAX_OPT_COUNT = 100
 
@@ -46,6 +47,9 @@ const NewPollSchema = object({
 	description: optional(string()),
 	isMultiple: optional(boolean(), false),
 	allowNewOptions: optional(boolean(), false),
+	requireTwitchAccount: optional(boolean(), false),
+	requireGoogleAccount: optional(boolean(), false),
+	requireTwitchSub: optional(boolean(), false),
 	votingTimeLimit: optional(
 		pipe(
 			unknown(),
@@ -80,6 +84,9 @@ function NewPollForm() {
 			votingTimeLimit: 30,
 			isMultiple: false,
 			allowNewOptions: false,
+			requireTwitchAccount: false,
+			requireGoogleAccount: false,
+			requireTwitchSub: false,
 			options: [{ optionText: '' }, { optionText: '' }],
 		},
 	})
@@ -94,6 +101,8 @@ function NewPollForm() {
 	})
 
 	const votingTime = watch('votingTimeLimit', 30)
+
+	const requireTwitchAccount = watch('requireTwitchAccount', false)
 	// const optionList = watch('options', [])
 
 	const timeChangeTimeout = useRef<ReturnType<typeof setTimeout>>(null!)
@@ -147,16 +156,21 @@ function NewPollForm() {
 			new Date().getTime() + Number(data.votingTimeLimit) * 60 * 1000
 		)
 
-		const newPollData: NewPoll = {
+		const newPollData: CreatePollParams = {
 			title: data.title,
 			options: data.options,
 			description: data.description ?? '',
 			isMultiple: data.isMultiple ?? false,
 			allowNewOptions: data.allowNewOptions ?? false,
+			requireTwitchAccount: data.requireTwitchAccount ?? false,
+			requireGoogleAccount: data.requireGoogleAccount ?? false,
+			requireTwitchSub:
+				(data.requireTwitchSub ?? false) &&
+				(data.requireTwitchAccount ?? false),
 			endsAt: endsAt,
 		}
 
-		const res = await createPoll(newPollData)
+		const res = await createNewPoll(newPollData)
 
 		if (res.success) {
 			setIsCreated(true)
@@ -399,6 +413,57 @@ function NewPollForm() {
 					{errors.allowNewOptions && (
 						<div className="text-red-400 text-xs">
 							{errors.allowNewOptions.message}
+						</div>
+					)}
+				</div>
+
+				<div>
+					<Checkbox
+						id="poll-require-twitch-account"
+						name="requireTwitchAccount"
+						control={control}
+						disabled={isSubmitting}
+					/>
+					<Label htmlFor="poll-require-twitch-account">
+						Require Twitch account
+					</Label>
+					{errors.requireTwitchAccount && (
+						<div className="text-red-400 text-xs">
+							{errors.requireTwitchAccount.message}
+						</div>
+					)}
+				</div>
+
+				<div style={{ display: requireTwitchAccount ? 'block' : 'none' }}>
+					<Checkbox
+						id="poll-require-twitch-sub"
+						name="requireTwitchSub"
+						control={control}
+						disabled={isSubmitting || !requireTwitchAccount}
+					/>
+					<Label htmlFor="poll-require-twitch-sub">
+						Require Twitch subscription
+					</Label>
+					{errors.requireTwitchSub && (
+						<div className="text-red-400 text-xs">
+							{errors.requireTwitchSub.message}
+						</div>
+					)}
+				</div>
+
+				<div>
+					<Checkbox
+						id="poll-require-google-account"
+						name="requireGoogleAccount"
+						control={control}
+						disabled={isSubmitting}
+					/>
+					<Label htmlFor="poll-require-google-account">
+						Require Google account
+					</Label>
+					{errors.requireGoogleAccount && (
+						<div className="text-red-400 text-xs">
+							{errors.requireGoogleAccount.message}
 						</div>
 					)}
 				</div>
