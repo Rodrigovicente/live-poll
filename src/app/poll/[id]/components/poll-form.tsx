@@ -21,7 +21,6 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { createVote } from '@/lib/db/queries/poll'
 import { votePoll } from '../actions'
 
 const PollSchema = object({
@@ -59,10 +58,10 @@ export function PollForm({ pollData }: { pollData: PollData }) {
 
 	const [hasNewOption, setHasNewOption] = useState(false)
 
-	function onSubmit(data: PollForm) {
+	async function onSubmit(data: PollForm) {
 		console.log(data)
 
-		const res = votePoll(pollData.identifier, data)
+		const res = await votePoll(pollData.identifier, data)
 
 		console.log(res)
 	}
@@ -81,7 +80,7 @@ export function PollForm({ pollData }: { pollData: PollData }) {
 								control={control}
 							/>
 							<Label htmlFor={`poll-option-${i}`} className="cursor-pointer">
-								{opt.text}
+								{opt.text} <span>({opt.voteCount} votes)</span>
 							</Label>
 						</div>
 					)
@@ -100,7 +99,10 @@ export function PollForm({ pollData }: { pollData: PollData }) {
 								className="bg-green-400"
 							/>
 							<Label htmlFor={`poll-option-${i}`} className="cursor-pointer">
-								{opt.text}
+								{opt.text}{' '}
+								<span className="text-xs text-slate-500">
+									({opt.voteCount} votes)
+								</span>
 							</Label>
 						</div>
 					)

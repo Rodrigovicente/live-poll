@@ -45,11 +45,14 @@ export async function getPollWithVotes(
 				isClosed: queryRes.rows[0].is_closed,
 				hasVoted: false,
 				allowNewOptions: queryRes.rows[0].allow_new_options,
+				requireTwitchAccount: queryRes.rows[0].require_twitch_account,
+				requireGoogleAccount: queryRes.rows[0].require_google_account,
+				requireTwitchSub: queryRes.rows[0].require_twitch_sub,
 				timeRemaining: 0,
 				createdAt: new Date(queryRes.rows[0].created_at),
 				options: queryRes.rows.map(row => ({
 					text: row.text,
-					voteCount: 1,
+					voteCount: row.vote_count,
 					isVoted: true,
 				})),
 			},
@@ -66,7 +69,10 @@ export async function getPollWithVotes(
 	}
 }
 
-export async function votePoll(identifier: string, data: PollForm) {
+export async function votePoll(
+	identifier: string,
+	data: PollForm
+): Promise<ApiResponse<string>> {
 	const session: (Session & { userId: string }) | null = await getServerSession(
 		authOptions
 	)
@@ -74,16 +80,41 @@ export async function votePoll(identifier: string, data: PollForm) {
 
 	if (!userId) return redirect('/')
 
-	console.log('SESSION ..:', session)
+	try {
+		let votedOptions
 
-	let votedOptions
+		if (typeof data.votedOptions === 'string')
+			votedOptions = Number(data.votedOptions)
+		else
+			votedOptions = data.votedOptions
+				.map((v, i) => (v ? i : null))
+				.filter(v => v !== null)
 
-	if (typeof data.votedOptions === 'string')
-		votedOptions = Number(data.votedOptions)
-	else
-		votedOptions = data.votedOptions
-			.map((v, i) => (v ? i : null))
-			.filter(v => v !== null)
+		const queryRes = await createVote(identifier, userId, votedOptions)
 
-	createVote(identifier, userId, votedOptions)
+		if (!queryRes) throw new Error('Failed to insert vote.')
+
+		if (queryRes.rowCount === 0) {
+			return {
+				success: false,
+				error: {
+					message: 'Failed to insert vote.',
+				},
+			}
+		}
+
+		return {
+			success: true,
+			payload: 'Vote registered successfully.',
+		}
+	} catch (e) {
+		console.error(e)
+
+		return {
+			success: false,
+			error: {
+				message: 'Failed to insert vote.',
+			},
+		}
+	}
 }

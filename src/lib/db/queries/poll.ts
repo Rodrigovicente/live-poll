@@ -118,11 +118,15 @@ export type GetPollDataWithVotesRow = {
 	description: string
 	is_multiple: boolean
 	allow_new_options: boolean
+	require_twitch_account: boolean
+	require_google_account: boolean
+	require_twitch_sub: boolean
 	ends_at: Date
 	is_closed: boolean
 	created_at: Date
 	index: number
 	text: string
+	vote_count: number
 }
 export async function getPollDataWithVotes(
 	identifier: string,
@@ -133,8 +137,16 @@ export async function getPollDataWithVotes(
 	try {
 		const queryRes: QueryResult<GetPollDataWithVotesRow> = await pool.query(
 			`
-				SELECT identifier, title, description, is_multiple, allow_new_options, ends_at, is_closed, created_at, index, text
-				FROM "Poll" INNER JOIN "PollOption" ON "Poll".id = "PollOption".poll_id WHERE identifier = $1 ORDER BY "index" ASC
+				SELECT identifier, title, description, is_multiple, allow_new_options, require_twitch_account, require_google_account, require_twitch_sub, ends_at, is_closed, created_at, index, text, COUNT(option_index) AS vote_count
+				FROM (
+					SELECT id, identifier, title, description, is_multiple, allow_new_options, require_twitch_account, require_google_account, require_twitch_sub, ends_at, is_closed, created_at, index, text FROM "Poll"
+					INNER JOIN "PollOption"
+					ON "Poll".id = "PollOption".poll_id
+					WHERE identifier = $1
+				) AS "poll_with_options"
+				INNER JOIN "Vote"
+				ON "poll_with_options".id = "Vote".poll_id AND "poll_with_options".index = "Vote".option_index
+				GROUP BY  id, identifier, title, description, is_multiple, allow_new_options, require_twitch_account, require_google_account, require_twitch_sub, ends_at, is_closed, created_at, index, text, "Vote".option_index
 			`,
 			[identifier]
 		)

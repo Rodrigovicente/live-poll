@@ -18,6 +18,9 @@ export type PollData = {
 	isClosed: boolean
 	hasVoted: boolean
 	allowNewOptions: boolean
+	requireTwitchAccount: boolean
+	requireGoogleAccount: boolean
+	requireTwitchSub: boolean
 	timeRemaining: number
 	createdAt: Date
 	options: { text: string; voteCount: number; isVoted?: boolean }[]
