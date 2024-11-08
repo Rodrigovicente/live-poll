@@ -1,0 +1,24 @@
+version: '2'
+# cloud:
+# Replace <PROJECT_ID> with your project ID from the sqlc Cloud dashboard
+# project: '01JAC4NCR9WQ1G3VZQX6BEN816'
+servers:
+  - engine: postgresql
+    uri: 'postgres://rodrigo:calabresa@localhost:5432/LivePoll?sslmode=disable'
+plugins:
+  - name: ts
+    wasm:
+      url: https://downloads.sqlc.dev/plugin/sqlc-gen-typescript_0.1.3.wasm
+      sha256: 287df8f6cc06377d67ad5ba02c9e0f00c585509881434d15ea8bd9fc751a9368
+sql:
+  - engine: 'postgresql'
+    queries: 'queries/'
+    schema: 'schema.sql'
+    # database:
+    # managed: true
+    codegen:
+      - out: db
+        plugin: ts
+        options:
+          runtime: node
+          driver: pg
