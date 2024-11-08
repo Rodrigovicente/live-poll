@@ -9,12 +9,12 @@ import Link from 'next/link'
 export default function TopBar() {
 	const { data: session } = useSession()
 
-	const Content = session ? LoggedIn : LoggedOut
+	const LoggedContent = session ? LoggedIn : LoggedOut
 
 	return (
 		<div className="w-full flex flex-col items-center space-y-2">
 			<p className="text-2xl">Live Poll</p>
-			<Content session={session} />
+			<LoggedContent session={session} />
 			<div className="flex flex-row">
 				<Button asChild>
 					<Link href="/">

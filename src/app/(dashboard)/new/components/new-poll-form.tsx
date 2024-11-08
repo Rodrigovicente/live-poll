@@ -26,6 +26,7 @@ import {
 	nonEmpty,
 	object,
 	optional,
+	picklist,
 	pipe,
 	string,
 	transform,
@@ -35,6 +36,8 @@ import { createNewPoll } from './actions'
 import { DialogComponent } from '@/components/ui/dialog'
 import PollCreated from './poll-created'
 import { CreatePollParams } from '@/lib/db/queries/poll'
+import { SessionContextValue, useSession } from 'next-auth/react'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 
 const MAX_OPT_COUNT = 100
 
@@ -45,8 +48,9 @@ const NewPollSchema = object({
 		maxLength(100, "Name can't be longer than 100 characters")
 	),
 	description: optional(string()),
-	isMultiple: optional(boolean(), false),
+	type: optional(picklist(['single', 'multiple', 'rate']), 'single'),
 	allowNewOptions: optional(boolean(), false),
+	allowVoteEdit: optional(boolean(), false),
 	requireTwitchAccount: optional(boolean(), false),
 	requireGoogleAccount: optional(boolean(), false),
 	requireTwitchSub: optional(boolean(), false),
@@ -68,6 +72,9 @@ const NewPollSchema = object({
 export type NewPollForm = InferInput<typeof NewPollSchema>
 
 function NewPollForm() {
+	const session = useSession()
+	console.log('session', session)
+
 	const {
 		register,
 		control,
@@ -82,11 +89,8 @@ function NewPollForm() {
 		resolver: valibotResolver(NewPollSchema),
 		defaultValues: {
 			votingTimeLimit: 30,
-			isMultiple: false,
+			type: 'single',
 			allowNewOptions: false,
-			requireTwitchAccount: false,
-			requireGoogleAccount: false,
-			requireTwitchSub: false,
 			options: [{ optionText: '' }, { optionText: '' }],
 		},
 	})
@@ -156,17 +160,28 @@ function NewPollForm() {
 			new Date().getTime() + Number(data.votingTimeLimit) * 60 * 1000
 		)
 
+		const requiredProviders = []
+		const requiredProviderSubs = []
+
+		if (data.requireTwitchAccount) requiredProviders.push('twitch')
+
+		if (data.requireGoogleAccount) requiredProviders.push('google')
+
+		if (data.requireTwitchAccount && data.requireTwitchSub)
+			requiredProviderSubs.push('twitch')
+
+		if ((session.data as any)?.identifier === undefined) return
+
 		const newPollData: CreatePollParams = {
+			creatorUserIdentifier: (session.data as any)?.identifier,
 			title: data.title,
 			options: data.options,
 			description: data.description ?? '',
-			isMultiple: data.isMultiple ?? false,
+			type: data.type ?? 'single',
 			allowNewOptions: data.allowNewOptions ?? false,
-			requireTwitchAccount: data.requireTwitchAccount ?? false,
-			requireGoogleAccount: data.requireGoogleAccount ?? false,
-			requireTwitchSub:
-				(data.requireTwitchSub ?? false) &&
-				(data.requireTwitchAccount ?? false),
+			allowVoteEdit: data.allowVoteEdit ?? false,
+			requiredProviders: requiredProviders,
+			requiredProviderSubs: requiredProviderSubs,
 			endsAt: endsAt,
 		}
 
@@ -298,7 +313,7 @@ function NewPollForm() {
 				() => {
 					timeAddMinutes(minutes, ++runCount!)
 				},
-				runCount < 5 ? 400 : 100
+				runCount < 3 ? 400 : 100
 			)
 		}
 	}
@@ -365,39 +380,47 @@ function NewPollForm() {
 							{errors.votingTimeLimit?.message}
 						</div>
 					)}
-					<Button type="button" onClick={() => timeAddMinutes(-1440)}>
-						-1 day
-					</Button>
-					<Button type="button" onClick={() => timeAddMinutes(-60)}>
-						-1 hour
-					</Button>
-					<Button type="button" onPointerDown={() => timeAddMinutes(-1, 0)}>
-						-
-					</Button>
-					<Button type="button" onPointerDown={() => timeAddMinutes(1, 0)}>
-						+
-					</Button>
-					<Button type="button" onClick={() => timeAddMinutes(60)}>
-						+1 hour
-					</Button>
-					<Button type="button" onClick={() => timeAddMinutes(1440)}>
-						+1 day
-					</Button>
+					<Button onClick={() => timeAddMinutes(-1440)}>-1 day</Button>
+					<Button onClick={() => timeAddMinutes(-60)}>-1 hour</Button>
+					<Button onPointerDown={() => timeAddMinutes(-1, 0)}>-</Button>
+					<Button onPointerDown={() => timeAddMinutes(1, 0)}>+</Button>
+					<Button onClick={() => timeAddMinutes(60)}>+1 hour</Button>
+					<Button onClick={() => timeAddMinutes(1440)}>+1 day</Button>
 				</div>
 
-				<div>
-					<Checkbox
-						id="poll-multiple"
-						name="isMultiple"
-						control={control}
-						disabled={isSubmitting}
-					/>
-					<Label htmlFor="poll-multiple">Multiple</Label>
-					{errors.isMultiple && (
-						<div className="text-red-400 text-xs">
-							{errors.isMultiple.message}
+				<div className="flex gap-4">
+					<RadioGroup control={control} name="type">
+						<div>
+							<RadioGroupItem
+								id="type-single"
+								value="single"
+								className="bg-green-400"
+							/>
+							<Label htmlFor="type-single" className="cursor-pointer">
+								Single choice
+							</Label>
 						</div>
-					)}
+						<div>
+							<RadioGroupItem
+								id="type-multiple"
+								value="multiple"
+								className="bg-green-400"
+							/>
+							<Label htmlFor="type-multiple" className="cursor-pointer">
+								Multiple choices
+							</Label>
+						</div>
+						<div>
+							<RadioGroupItem
+								id="type-rate"
+								value="rate"
+								className="bg-green-400"
+							/>
+							<Label htmlFor="type-rate" className="cursor-pointer">
+								Rating
+							</Label>
+						</div>
+					</RadioGroup>
 				</div>
 
 				<div>
@@ -413,6 +436,21 @@ function NewPollForm() {
 					{errors.allowNewOptions && (
 						<div className="text-red-400 text-xs">
 							{errors.allowNewOptions.message}
+						</div>
+					)}
+				</div>
+
+				<div>
+					<Checkbox
+						id="poll-allow-vote-edit"
+						name="allowVoteEdit"
+						control={control}
+						disabled={isSubmitting}
+					/>
+					<Label htmlFor="poll-allow-vote-edit">Allow vote edition</Label>
+					{errors.allowVoteEdit && (
+						<div className="text-red-400 text-xs">
+							{errors.allowVoteEdit.message}
 						</div>
 					)}
 				</div>
@@ -514,7 +552,6 @@ function NewPollForm() {
 					))}
 				</ul>
 				<Button
-					type="button"
 					onClick={addOption}
 					disabled={optionFields.length >= MAX_OPT_COUNT}
 				>

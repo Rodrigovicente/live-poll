@@ -1,23 +1,24 @@
+'use server'
 import { PollCardData } from '@/components/poll-card'
 import { ApiResponse } from '../api/utils'
-import { getPollList } from '@/lib/db/queries/poll'
+import { getPollListFromUser, PollData } from '@/lib/db/queries/poll'
 
-export async function getPollCardList(): Promise<
-	ApiResponse<PollCardData[] | null>
-> {
+export async function getPollCardList(
+	userIdentifier: string
+): Promise<ApiResponse<PollData[] | null>> {
 	'use server'
 
 	// Simulate slow network
 	await new Promise(resolve => setTimeout(resolve, 1000))
 
 	try {
-		const queryRes = await getPollList()
+		const PollDataList = await getPollListFromUser(userIdentifier)
 
-		if (!queryRes) throw new Error('Failed to fetch poll list.')
+		if (!PollDataList) throw new Error('Failed to fetch poll list.')
 
-		console.log('===>>', queryRes.rows)
+		console.log('===>>', PollDataList)
 
-		if (queryRes.rowCount === 0) {
+		if (PollDataList.length === 0) {
 			return {
 				success: true,
 				payload: [],
@@ -26,16 +27,7 @@ export async function getPollCardList(): Promise<
 
 		return {
 			success: true,
-			payload: queryRes.rows.map(row => ({
-				identifier: row.identifier,
-				title: row.title,
-				description: row.description,
-				isMultiple: row.is_multiple,
-				voteCount: 0,
-				timeRemaining: 0,
-				isClosed: row.is_closed,
-				createdAt: row.created_at,
-			})),
+			payload: PollDataList,
 		}
 	} catch (e) {
 		console.error('ERRO:', e)

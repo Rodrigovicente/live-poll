@@ -30,6 +30,7 @@ const Checkbox = React.forwardRef<
 							className
 						)}
 						{...props}
+						disabled={field.disabled || props.disabled}
 						checked={field.value}
 						onCheckedChange={field.onChange}
 					>

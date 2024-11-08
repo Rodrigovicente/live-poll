@@ -4,9 +4,9 @@ import { Button } from '@/components/ui/button'
 import { signIn } from 'next-auth/react'
 import { IconType, SiGoogle, SiTwitch } from '@icons-pack/react-simple-icons'
 import React from 'react'
-import { FindUserByIdRow } from '@/lib/db/queries/user'
-import { GetAccountsByUserIdRow } from '@/lib/db/queries/user'
+import { FormattedUserData } from '@/lib/db/queries/user'
 import { useRouter } from 'next/navigation'
+import { getUserDataRow } from '@/db/db/user_sql'
 
 type ProviderData = {
 	id: string
@@ -29,8 +29,8 @@ export default function LinkAccounts({
 	user,
 	accounts,
 }: {
-	user?: FindUserByIdRow
-	accounts?: GetAccountsByUserIdRow[]
+	user?: Pick<getUserDataRow, 'identifier'>
+	accounts?: FormattedUserData['accounts']
 }) {
 	const router = useRouter()
 

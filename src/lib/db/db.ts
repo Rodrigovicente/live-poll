@@ -11,6 +11,8 @@ const pool = new Pool({
 	connectionTimeoutMillis: 2000,
 })
 
+// export const client = await pool.connect()
+
 // const pool = new Pool({
 // 	connectionString: process.env.POSTGRES_URL,
 // })

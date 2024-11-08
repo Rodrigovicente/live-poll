@@ -57,7 +57,9 @@ export async function createNewPoll(
 		title: newPollData.title,
 		options: newPollData.options,
 		description: newPollData.description,
-		isMultiple: newPollData.isMultiple,
+		type: newPollData.type,
+		requiredProviders: newPollData.requiredProviders,
+		requiredProviderSubs: newPollData.requiredProviderSubs,
 		allowNewOptions: newPollData.allowNewOptions,
 		endsAt: newPollData.endsAt.toISOString(),
 	})

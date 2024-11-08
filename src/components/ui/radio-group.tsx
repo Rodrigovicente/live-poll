@@ -7,28 +7,40 @@ import * as RadioGroupPrimitive from '@radix-ui/react-radio-group'
 import { cn } from '@/lib/utils'
 import { Control, Controller } from 'react-hook-form'
 
+type RadioGroupProps = {
+	control?: Control<any, any>
+	onValueChange?: (value: string) => void
+	parseValue?: (value: string) => any
+	onRenderValueChange?: (v: any) => void
+}
+
 const RadioGroup = React.forwardRef<
-	React.ElementRef<typeof RadioGroupPrimitive.Root> & {
-		control?: Control<any, any>
-	},
-	React.ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Root> & {
-		control?: Control<any, any>
-	}
->(({ className, ...props }, ref) => {
+	React.ElementRef<typeof RadioGroupPrimitive.Root> & RadioGroupProps,
+	React.ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Root> &
+		RadioGroupProps
+>(({ className, parseValue, onRenderValueChange, ...props }, ref) => {
 	if (props.control !== undefined)
 		return (
 			<Controller
 				control={props.control}
 				name={props.name ?? ''}
-				render={({ field }) => (
-					<RadioGroupPrimitive.Root
-						className={cn('grid gap-2', className)}
-						{...props}
-						onValueChange={field.onChange}
-						value={field.value}
-						ref={ref}
-					/>
-				)}
+				render={({ field }) => {
+					// console.log('field', field.value)
+					onRenderValueChange?.(field.value)
+					return (
+						<RadioGroupPrimitive.Root
+							className={cn('grid gap-2', className)}
+							{...props}
+							disabled={props.disabled || field.disabled}
+							onValueChange={v => {
+								props.onValueChange?.(v)
+								return field.onChange(parseValue ? parseValue(v) : v)
+							}}
+							value={field.value?.toString() ?? ''}
+							ref={ref}
+						/>
+					)
+				}}
 			/>
 		)
 
@@ -42,9 +54,12 @@ const RadioGroup = React.forwardRef<
 })
 RadioGroup.displayName = RadioGroupPrimitive.Root.displayName
 
+type RadioGroupItemProps = object
+
 const RadioGroupItem = React.forwardRef<
-	React.ElementRef<typeof RadioGroupPrimitive.Item>,
-	React.ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Item>
+	React.ElementRef<typeof RadioGroupPrimitive.Item> & RadioGroupItemProps,
+	React.ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Item> &
+		RadioGroupItemProps
 >(({ className, ...props }, ref) => {
 	return (
 		<RadioGroupPrimitive.Item

@@ -4,18 +4,28 @@ import pgFormat from 'pg-format'
 import { QueryResult } from 'pg'
 import pool from '../db'
 import { nanoid } from '@/lib/utils'
+import {
+	getPollDataListFromUserByIdentifier,
+	getPollDataWithVotes as getPollDataWithVotesSQL,
+	registerMultipleVotes,
+	registerNewOption,
+	registerSingleVote,
+} from '@/db/db/poll_sql'
+import { getPollDataListFromUserByIdentifierRow } from './../../../db/db/poll_sql'
+// import { PollData } from './../../../app/poll/[id]/page'
 
 export type CreatePollParams = {
+	creatorUserIdentifier: string
 	title: string
+	description: string
 	options: {
 		optionText: string
 	}[]
-	description: string
-	isMultiple: boolean
+	type: 'single' | 'multiple' | 'rate'
 	allowNewOptions: boolean
-	requireTwitchAccount: boolean
-	requireGoogleAccount: boolean
-	requireTwitchSub: boolean
+	allowVoteEdit: boolean
+	requiredProviders: string[]
+	requiredProviderSubs: string[]
 	endsAt: Date
 }
 
@@ -32,13 +42,13 @@ export async function createPoll(newPollData: CreatePollParams) {
 	try {
 		const sqlOptionsInsert = pgFormat(
 			`
-			INSERT INTO "PollOption" (poll_id, index, text) SELECT "poll_id", "index", "text" FROM ((%s) AS "options_data" CROSS JOIN "insert_poll") RETURNING "poll_id";
+			INSERT INTO "PollOption" (poll_id, index, label) SELECT "poll_id", "index", "label" FROM ((%s) AS "options_data" CROSS JOIN "insert_poll") RETURNING "poll_id";
 			`,
 			options
 				.map(
 					(option, index) =>
 						(index === 0 ? '' : 'UNION ALL ') +
-						pgFormat('SELECT %s AS "index", %L AS "text"', index, option)
+						pgFormat('SELECT %s AS "index", %L AS "label"', index, option)
 				)
 				.join(' ')
 		)
@@ -48,32 +58,35 @@ export async function createPoll(newPollData: CreatePollParams) {
 		const queryRes = await pool.query(
 			`
 				WITH "insert_poll" AS (
-					INSERT INTO "Poll" (identifier, title, description, is_multiple, is_closed, allow_new_options, require_twitch_account, require_google_account, require_twitch_sub, ends_at)
-					SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
-					WHERE (SELECT COUNT(*) FROM "Poll" WHERE "is_closed" = false) < 3 RETURNING "id" AS "poll_id"
+					WITH "Creator_id_row" AS (
+						SELECT id FROM "User" WHERE identifier = $2
+					)
+					INSERT INTO "Poll" (identifier, creator_user_id, title, description, type, allow_new_options, allow_vote_edit, required_providers, required_provider_subs, ends_at)
+					SELECT $1, (SELECT id FROM "Creator_id_row"), $3, $4, $5, $6, $7, $8, $9, $10
+					WHERE (SELECT COUNT(*) FROM "Poll" WHERE "is_closed" = false AND creator_user_id = (SELECT id FROM "Creator_id_row")) < 10 RETURNING "id" AS "poll_id"
 				)
 
 				${sqlOptionsInsert}
 			`,
 			[
 				identifier,
+				newPollData.creatorUserIdentifier,
 				newPollData.title,
 				newPollData.description,
-				newPollData.isMultiple,
-				false,
+				newPollData.type,
 				newPollData.allowNewOptions,
-				newPollData.requireTwitchAccount,
-				newPollData.requireGoogleAccount,
-				newPollData.requireTwitchSub,
-				newPollData.endsAt,
+				newPollData.allowVoteEdit,
+				newPollData.requiredProviders,
+				newPollData.requiredProviderSubs,
+				newPollData.endsAt.toISOString(),
 			]
 		)
 
-		console.log('getPollList =>', queryRes.rows)
+		console.log('createPoll =>', queryRes.rows)
 
 		return queryRes
 	} catch (e) {
-		console.error(e)
+		console.error('ERROR DURING POLL CREATION:', e)
 
 		return null
 	}
@@ -91,24 +104,26 @@ export type GetPollListRow = {
 	ends_at: Date
 	created_at: Date
 }
-export async function getPollList() {
+export type PollData = getPollDataListFromUserByIdentifierRow
+
+export async function getPollListFromUser(userIdentifier: string) {
 	'use server'
 
+	const client = await pool.connect()
 	try {
-		const queryRes: QueryResult<any> = await pool.query(
-			`
-				SELECT identifier, title, description, is_multiple, allow_new_options, require_twitch_account, require_google_account, is_closed, ends_at created_at
-				FROM "Poll"
-			`
-		)
+		const pollDataList = await getPollDataListFromUserByIdentifier(client, {
+			identifier: userIdentifier,
+		})
 
-		console.log('getPollList =>', queryRes.rows)
+		console.log('getPollListFromUser =>', pollDataList)
 
-		return queryRes
+		return pollDataList
 	} catch (e) {
 		console.error(e)
 
 		return null
+	} finally {
+		client.release()
 	}
 }
 
@@ -130,34 +145,49 @@ export type GetPollDataWithVotesRow = {
 }
 export async function getPollDataWithVotes(
 	identifier: string,
-	userId?: string
+	userIdentifier: string
 ) {
 	'use server'
 
+	const client = await pool.connect()
 	try {
-		const queryRes: QueryResult<GetPollDataWithVotesRow> = await pool.query(
-			`
-				SELECT identifier, title, description, is_multiple, allow_new_options, require_twitch_account, require_google_account, require_twitch_sub, ends_at, is_closed, created_at, index, text, COUNT(option_index) AS vote_count
-				FROM (
-					SELECT id, identifier, title, description, is_multiple, allow_new_options, require_twitch_account, require_google_account, require_twitch_sub, ends_at, is_closed, created_at, index, text FROM "Poll"
-					INNER JOIN "PollOption"
-					ON "Poll".id = "PollOption".poll_id
-					WHERE identifier = $1
-				) AS "poll_with_options"
-				INNER JOIN "Vote"
-				ON "poll_with_options".id = "Vote".poll_id AND "poll_with_options".index = "Vote".option_index
-				GROUP BY  id, identifier, title, description, is_multiple, allow_new_options, require_twitch_account, require_google_account, require_twitch_sub, ends_at, is_closed, created_at, index, text, "Vote".option_index
-			`,
-			[identifier]
-		)
+		const pollData = await getPollDataWithVotesSQL(client, {
+			identifier,
+			userIdentifier,
+		})
 
-		console.log('getPollDataWithVotes =>', queryRes.rows)
+		console.log('getPollDataWithVotes =>', pollData)
 
-		return queryRes
+		return {
+			identifier: pollData[0].identifier,
+			title: pollData[0].title,
+			description: pollData[0].description,
+			type: pollData[0].type,
+			allowNewOptions: pollData[0].allowNewOptions,
+			allowVoteEdit: pollData[0].allowVoteEdit,
+			requiredProviders: pollData[0].requiredProviders,
+			requiredProviderSubs: pollData[0].requiredProviderSubs,
+			endsAt: pollData[0].endsAt,
+			isClosed: pollData[0].isClosed,
+			createdAt: pollData[0].createdAt,
+			hasCreatedOption: pollData[0].hasCreated,
+			hasVoted: pollData.some(row => row.isVoted),
+			options: pollData.map(row => {
+				return {
+					index: +row.index,
+					label: row.label ?? '',
+					voteRateCount: +row.voteRateCount,
+					rateAvg: row.rateAvg,
+					isVoted: row.isVoted,
+				}
+			}),
+		}
 	} catch (e) {
 		console.error(e)
 
 		return null
+	} finally {
+		client.release()
 	}
 }
 
@@ -168,7 +198,7 @@ export type CreateVoteRow = {
 }
 export async function createVote(
 	identifier: string,
-	userId: string,
+	userIdentifier: string,
 	votedIndex: number[] | number
 ) {
 	'use server'
@@ -188,14 +218,14 @@ export async function createVote(
 				FROM (
 					SELECT "option_index", "user_id", "id" AS "poll_id"
 					FROM (
-						SELECT %L::SMALLINT AS "option_index", %L::BIGINT AS "user_id"
+						SELECT %L::SMALLINT AS "option_index", (SELECT id FROM "User" WHERE identifier = %L::VARCHAR) AS "user_id"
 					) AS "voted_data"
 					CROSS JOIN "poll_id"
 				) AS "insert_values" RETURNING *
 				`,
 				identifier,
 				votedIndex,
-				userId
+				userIdentifier
 			)
 		} else {
 			sqlVotedInsert = pgFormat(
@@ -217,9 +247,9 @@ export async function createVote(
 						(optionIndex, i) =>
 							(i === 0 ? '' : 'UNION ALL ') +
 							pgFormat(
-								'SELECT %L::SMALLINT AS "option_index", %L::BIGINT AS "user_id"',
+								'SELECT %L::SMALLINT AS "option_index", (SELECT id FROM "User" WHERE identifier = %L::VARCHAR) AS "user_id"',
 								optionIndex,
-								userId
+								userIdentifier
 							)
 					)
 					.join(' ')
@@ -235,8 +265,151 @@ export async function createVote(
 
 		return queryRes
 	} catch (e) {
+		console.error('CREATE VOTE ERROR: ', e)
+
+		return null
+	}
+}
+
+export type RegisterVoteRow =
+	| {
+			type: 'single'
+			data: {
+				userIdentifier: string
+				pollIdentifier: string
+				optionIndex: number
+			}
+	  }
+	| {
+			type: 'multiple'
+			data: {
+				userIdentifier: string
+				pollIdentifier: string
+				optionIndex: number[]
+			}
+	  }
+	| {
+			type: 'rate'
+			data: {
+				userIdentifier: string
+				pollIdentifier: string
+				optionIndex: { index: number; rating: 1 | 2 | 3 | 4 | 5 }[]
+			}
+	  }
+export async function registerVote({
+	type,
+	data: { userIdentifier, pollIdentifier, optionIndex },
+}: RegisterVoteRow) {
+	'use server'
+
+	const client = await pool.connect()
+	try {
+		let voteData
+
+		if (type === 'single') {
+			if (Array.isArray(optionIndex))
+				throw new Error('optionIndex should be a number')
+
+			voteData = await registerSingleVote(client, {
+				userIdentifier,
+				pollIdentifier,
+				optionIndex,
+			})
+		} else if (type === 'multiple') {
+			if (
+				!Array.isArray(optionIndex) ||
+				(optionIndex.length > 0 && typeof optionIndex[0] === 'object')
+			)
+				throw new Error('optionIndex should be a number array')
+
+			voteData = await registerMultipleVotes(client, {
+				userIdentifier,
+				pollIdentifier,
+				optionIndexList: optionIndex as number[],
+			})
+		} else if (type === 'rate') {
+			if (Array.isArray(optionIndex))
+				throw new Error('optionIndex should be a number')
+
+			return null
+		}
+
+		console.log('registerVote =>', voteData)
+
+		return voteData
+	} catch (e) {
 		console.error(e)
 
 		return null
+	} finally {
+		client.release()
+	}
+}
+
+export type RegisterNewOptionRow =
+	| {
+			type: 'single' | 'multiple'
+			data: {
+				userIdentifier: string
+				pollIdentifier: string
+				optionLabel: string
+				rating?: never
+			}
+	  }
+	| {
+			type: 'rate'
+			data: {
+				userIdentifier: string
+				pollIdentifier: string
+				optionLabel: string
+				rating: 1 | 2 | 3 | 4 | 5
+			}
+	  }
+
+export async function addNewOption({
+	type,
+	data: { userIdentifier, pollIdentifier, optionLabel, rating },
+}: RegisterNewOptionRow) {
+	'use server'
+
+	const client = await pool.connect()
+	try {
+		let voteData
+
+		if (userIdentifier.length < 0)
+			throw new Error('userIdentifier should be a non-empty string')
+		if (pollIdentifier.length < 0)
+			throw new Error('pollIdentifier should be a non-empty string')
+		if (optionLabel.length < 0)
+			throw new Error('optionLabel should be a non-empty string')
+
+		if (type === 'single' || type === 'multiple') {
+			voteData = await registerNewOption(client, {
+				userIdentifier,
+				pollIdentifier,
+				optionLabel,
+				optionRating: -1,
+			})
+		} else if (type === 'rate') {
+			if (![1, 2, 3, 4, 5].includes(rating ?? -1))
+				throw new Error('rating should be a number between 1 and 5')
+
+			voteData = await registerNewOption(client, {
+				userIdentifier,
+				pollIdentifier,
+				optionLabel,
+				optionRating: rating!,
+			})
+		}
+
+		console.log('registerVote =>', voteData)
+
+		return voteData
+	} catch (e) {
+		console.error(e)
+
+		return null
+	} finally {
+		client.release()
 	}
 }
