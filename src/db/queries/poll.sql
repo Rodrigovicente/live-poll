@@ -12,18 +12,94 @@ ON "Poll".creator_user_id = "User".id
 GROUP BY "Poll".id, "User".identifier;
 
 -- name: getPollDataListFromUserByIdentifier :many
-SELECT "Poll".identifier AS identifier, "User".identifier AS creator_user_identifier, title, description, type, allow_new_options, required_providers, required_provider_subs, (BOOL_OR(is_closed) OR ends_at < NOW())::BOOLEAN AS is_closed, ends_at, created_at, COUNT("Vote_and_rate".poll_id) AS vote_rate_count
-FROM "Poll"
-LEFT JOIN (
-	SELECT poll_id, option_index FROM "Vote"
+WITH "User_id_cte" AS (
+	SELECT id FROM "User"
+	WHERE identifier = @identifier
+),
+"Vote_rate_data_cte" AS (
+	SELECT poll_id, user_id, option_index FROM "Vote"
 	UNION ALL
-	SELECT poll_id, option_index FROM "Rate"
+	SELECT poll_id, user_id, option_index FROM "Rate"
+)
+SELECT "User_created_polls".identifier AS identifier, (SELECT @identifier::VARCHAR) AS creator_user_identifier, title, description, type, allow_new_options, required_providers, required_provider_subs, (BOOL_OR(is_closed) OR ends_at < NOW())::BOOLEAN AS is_closed, ends_at, created_at, COUNT("Vote_and_rate".poll_id) AS vote_rate_count, ("Has_voted".has_voted IS NOT NULL) AS has_voted
+FROM (
+	SELECT * FROM "Poll"
+	WHERE "Poll".creator_user_id = (SELECT id FROM "User_id_cte")
+) AS "User_created_polls"
+LEFT JOIN (
+	SELECT poll_id, option_index FROM "Vote_rate_data_cte"
 	) AS "Vote_and_rate"
-ON "Poll".id = "Vote_and_rate".poll_id
-INNER JOIN "User"
-ON "Poll".creator_user_id = "User".id
-WHERE "User".identifier = $1
-GROUP BY "Poll".id, "User".identifier;
+ON "User_created_polls".id = "Vote_and_rate".poll_id
+LEFT JOIN (
+	SELECT TRUE AS has_voted, poll_id
+	FROM "Vote_rate_data_cte"
+	WHERE user_id = (SELECT id FROM "User_id_cte")
+	GROUP BY has_voted, poll_id
+) AS "Has_voted"
+ON "User_created_polls".id = "Has_voted".poll_id
+GROUP BY "Has_voted".has_voted, "User_created_polls".id, "User_created_polls".identifier, title, description, type, allow_new_options, required_providers, required_provider_subs, ends_at, created_at
+ORDER BY created_at DESC;
+
+-- name: getOpenPollDataListFromUserByIdentifier :many
+WITH "User_id_cte" AS (
+	SELECT id FROM "User"
+	WHERE identifier = @identifier
+),
+"Vote_rate_data_cte" AS (
+	SELECT poll_id, user_id, option_index FROM "Vote"
+	UNION ALL
+	SELECT poll_id, user_id, option_index FROM "Rate"
+)
+SELECT "User_created_polls".identifier AS identifier, (SELECT @identifier::VARCHAR) AS creator_user_identifier, title, description, type, allow_new_options, required_providers, required_provider_subs, (BOOL_OR(is_closed) OR ends_at < NOW())::BOOLEAN AS is_closed, ends_at, created_at, COUNT("Vote_and_rate".poll_id) AS vote_rate_count, ("Has_voted".has_voted IS NOT NULL) AS has_voted
+FROM (
+	SELECT * FROM "Poll"
+	WHERE "Poll".creator_user_id = (SELECT id FROM "User_id_cte")
+	AND "Poll".is_closed = FALSE
+	AND "Poll".ends_at > NOW()
+) AS "User_created_polls"
+LEFT JOIN (
+	SELECT poll_id, option_index FROM "Vote_rate_data_cte"
+	) AS "Vote_and_rate"
+ON "User_created_polls".id = "Vote_and_rate".poll_id
+LEFT JOIN (
+	SELECT TRUE AS has_voted, poll_id
+	FROM "Vote_rate_data_cte"
+	WHERE user_id = (SELECT id FROM "User_id_cte")
+	GROUP BY has_voted, poll_id
+) AS "Has_voted"
+ON "User_created_polls".id = "Has_voted".poll_id
+GROUP BY "Has_voted".has_voted, "User_created_polls".id, "User_created_polls".identifier, title, description, type, allow_new_options, required_providers, required_provider_subs, ends_at, created_at
+ORDER BY created_at DESC;
+
+-- name: getClosedPollDataListFromUserByIdentifier :many
+WITH "User_id_cte" AS (
+	SELECT id FROM "User"
+	WHERE identifier = @identifier
+),
+"Vote_rate_data_cte" AS (
+	SELECT poll_id, user_id, option_index FROM "Vote"
+	UNION ALL
+	SELECT poll_id, user_id, option_index FROM "Rate"
+)
+SELECT "User_created_polls".identifier AS identifier, (SELECT @identifier::VARCHAR) AS creator_user_identifier, title, description, type, allow_new_options, required_providers, required_provider_subs, (BOOL_OR(is_closed) OR ends_at < NOW())::BOOLEAN AS is_closed, ends_at, created_at, COUNT("Vote_and_rate".poll_id) AS vote_rate_count, ("Has_voted".has_voted IS NOT NULL) AS has_voted
+FROM (
+	SELECT * FROM "Poll"
+	WHERE "Poll".creator_user_id = (SELECT id FROM "User_id_cte")
+	AND ("Poll".is_closed = TRUE OR "Poll".ends_at < NOW())
+) AS "User_created_polls"
+LEFT JOIN (
+	SELECT poll_id, option_index FROM "Vote_rate_data_cte"
+	) AS "Vote_and_rate"
+ON "User_created_polls".id = "Vote_and_rate".poll_id
+LEFT JOIN (
+	SELECT TRUE AS has_voted, poll_id
+	FROM "Vote_rate_data_cte"
+	WHERE user_id = (SELECT id FROM "User_id_cte")
+	GROUP BY has_voted, poll_id
+) AS "Has_voted"
+ON "User_created_polls".id = "Has_voted".poll_id
+GROUP BY "Has_voted".has_voted, "User_created_polls".id, "User_created_polls".identifier, title, description, type, allow_new_options, required_providers, required_provider_subs, ends_at, created_at
+ORDER BY created_at DESC;
 
 -- name: getPollListFromUserByIdentifier :many
 SELECT identifier, title, description, type, allow_new_options, required_providers, required_provider_subs, is_closed, ends_at created_at
@@ -84,9 +160,10 @@ WITH "Null_rating" AS (
 	SELECT id FROM "User"
 	WHERE "User".identifier = @user_identifier
 )
-SELECT identifier, title, description, type, allow_new_options, allow_vote_edit, required_providers, required_provider_subs, ends_at, (BOOL_OR(is_closed) OR ends_at < NOW())::BOOLEAN AS is_closed, "Poll_with_options".created_at, index, label, COUNT(option_index) AS vote_rate_count, has_created,
+SELECT identifier, title, description, type, allow_new_options, allow_vote_edit, required_providers, required_provider_subs, ends_at, (BOOL_OR(is_closed) OR ends_at < NOW())::BOOLEAN AS is_closed, "Poll_with_options".created_at, index, label, COUNT("Vote_rate_with_hascreated".option_index) AS vote_rate_count, has_created,
 	CASE WHEN "Poll_with_options".type = 'rate' THEN AVG("Vote_rate_with_hascreated".rating) END AS rate_avg,
-	CAST(BOOL_OR(CASE WHEN "Vote_rate_with_hascreated".user_id = (SELECT id FROM "User_id_cte") THEN TRUE ELSE FALSE END) AS BOOLEAN) AS is_voted
+	CAST(BOOL_OR(CASE WHEN "Vote_rate_with_hascreated".user_id = (SELECT id FROM "User_id_cte") THEN TRUE ELSE FALSE END) AS BOOLEAN) AS is_voted,
+	"User_ratings".rating
 FROM (
 	SELECT id, identifier, title, description, type, allow_new_options, allow_vote_edit, required_providers, required_provider_subs, ends_at, is_closed, created_at, index, label
 	FROM "Poll"
@@ -116,7 +193,14 @@ CROSS JOIN
 		LIMIT 1
 	) AS has_created
 ) AS "Has_created_row"
-GROUP BY  id, identifier, title, description, type, allow_new_options, allow_vote_edit, required_providers, required_provider_subs, ends_at, "Poll_with_options".created_at, index, label, "Vote_rate_with_hascreated".option_index, "Has_created_row".has_created
+LEFT JOIN (
+	SELECT poll_id, user_id, option_index, rating
+	FROM "Rate"
+	WHERE poll_id = (SELECT id FROM "Poll_id_cte")	
+	AND user_id = (SELECT id FROM "User_id_cte")
+) AS "User_ratings"
+ON "Vote_rate_with_hascreated".option_index = "User_ratings".option_index
+GROUP BY  id, identifier, title, description, type, allow_new_options, allow_vote_edit, required_providers, required_provider_subs, ends_at, "Poll_with_options".created_at, index, label, "Vote_rate_with_hascreated".option_index, "Has_created_row".has_created, "User_ratings".rating
 ORDER BY "Poll_with_options".index ASC;
 
 -- name: getPollVotes :many
@@ -283,6 +367,72 @@ WITH "poll_userid_cte" AS (
 SELECT * FROM "new_vote"
 LIMIT 1;
 
+-- name: registerMultipleRates :many
+WITH "user_id_row" AS (
+	SELECT id AS "user_id" FROM "User" WHERE "User".identifier = @user_identifier
+),
+"poll_id_row" AS (
+	SELECT id AS "poll_id" FROM "Poll" WHERE "Poll".identifier = @poll_identifier
+),
+"poll_user_id_row" AS (
+	SELECT "poll_id", "user_id" FROM "poll_id_row"
+	CROSS JOIN "user_id_row"
+),
+-- "unnested_ratings_array" AS (
+-- 	SELECT * FROM UNNEST(@option_index_list::SMALLINT[], @rating_list::SMALLINT[]) AS X("option_index", "rating")
+-- ),
+"unnested_ratings_array" AS (
+	SELECT 
+   	CAST(data ->> 0 AS SMALLINT) AS option_index,
+   	CAST(data ->> 1 AS SMALLINT) AS rating
+	FROM jsonb_array_elements(to_jsonb(@index_rating_pair_list::SMALLINT[][])) AS x(data)
+),
+"old_rates" AS (
+	SELECT option_index FROM "Rate"
+	WHERE poll_id = (SELECT poll_id FROM "poll_id_row")
+	AND user_id = (SELECT user_id FROM "user_id_row")
+),
+"to_insert_rates" AS (
+	SELECT * FROM "unnested_ratings_array"
+	WHERE option_index NOT IN (SELECT * FROM "old_rates")
+),
+"to_delete_rates" AS (
+	SELECT option_index FROM "Rate"
+	WHERE poll_id = (SELECT poll_id FROM "poll_id_row")
+	AND user_id = (SELECT user_id FROM "user_id_row")
+	AND option_index NOT IN (SELECT option_index FROM "unnested_ratings_array")
+),
+"deleted_rates" AS (
+	DELETE FROM "Rate"
+	WHERE poll_id = (SELECT poll_id FROM "poll_id_row")
+	AND user_id = (SELECT user_id FROM "user_id_row")
+	AND option_index IN (SELECT * FROM "to_delete_rates")
+	RETURNING *
+),
+"new_rates" AS (
+	SELECT "option_index", "user_id", "poll_id", "rating"
+	FROM "to_insert_rates"
+	CROSS JOIN "poll_user_id_row"
+),
+"inserted_rates" AS (
+	INSERT INTO "Rate" (user_id, poll_id, option_index, rating)
+	SELECT user_id, poll_id, option_index, rating
+	FROM "new_rates"
+	RETURNING *
+),
+"updated_rates" AS (
+	UPDATE "Rate" 
+	SET rating = "unnested_ratings_array".rating
+	FROM "unnested_ratings_array"
+	WHERE "unnested_ratings_array".option_index = "Rate".option_index
+	AND "Rate".poll_id = (SELECT poll_id FROM "poll_id_row")
+	AND "Rate".user_id = (SELECT user_id FROM "user_id_row")
+	RETURNING *
+)
+SELECT "option_index", "user_id", "poll_id", "rating"
+FROM "unnested_ratings_array"
+CROSS JOIN "poll_user_id_row";
+
 -- -- name: registerNewOption :one
 -- WITH "user_id_cte" AS (
 -- 	SELECT id FROM "User" WHERE "User".identifier = @user_identifier
@@ -381,9 +531,9 @@ WITH "user_id_cte" AS (
 ),
 "new_option_creator" AS (
 	INSERT INTO "OptionCreator" (user_id, poll_id, option_index)
-	VALUES ((SELECT id FROM "user_id_cte"),
-			(SELECT id FROM "poll_id_type_cte"),
-			(SELECT index FROM "new_option")
+	VALUES ((SELECT id AS user_id FROM "user_id_cte"),
+			(SELECT id AS poll_id FROM "poll_id_type_cte"),
+			(SELECT index AS option_index FROM "new_option")
 		)
 ),
 "old_vote_delete" AS (
@@ -408,9 +558,9 @@ WITH "user_id_cte" AS (
 	INSERT INTO "Rate" (user_id, poll_id, option_index, rating)
 	SELECT * FROM (
 		SELECT
-			(SELECT id FROM "user_id_cte"),
-			(SELECT id FROM "poll_id_type_cte"),
-			(SELECT index FROM "new_option"),
+			(SELECT id FROM "user_id_cte") AS "user_id",
+			(SELECT id FROM "poll_id_type_cte") AS "poll_id",
+			(SELECT index FROM "new_option") AS "option_index",
 			(SELECT @option_rating::SMALLINT AS "rating") --rating
 	) AS "rate_insert_values"
 	WHERE

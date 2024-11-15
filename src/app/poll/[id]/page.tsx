@@ -31,6 +31,8 @@ export type PollData = {
 		label: string
 		voteRateCount?: number | null
 		isVoted?: boolean | null
+		rating?: number | null
+		rateAvg: number | null
 	}[]
 }
 

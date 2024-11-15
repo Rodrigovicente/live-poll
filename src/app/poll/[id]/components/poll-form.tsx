@@ -1,7 +1,13 @@
 'use client'
 
 import { valibotResolver } from '@hookform/resolvers/valibot'
-import React, { memo, useOptimistic, useState, useTransition } from 'react'
+import React, {
+	memo,
+	useMemo,
+	useOptimistic,
+	useState,
+	useTransition,
+} from 'react'
 import {
 	Control,
 	FieldErrors,
@@ -20,11 +26,13 @@ import {
 	is,
 	literal,
 	nonEmpty,
+	nullish,
 	number,
 	object,
 	optional,
 	pipe,
 	string,
+	transform,
 	union,
 	variant,
 } from 'valibot'
@@ -35,18 +43,21 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { votePollSingle, votePollMultiple } from '../actions'
-import RatingOption from './rating-option'
+import { votePollSingle, votePollMultiple, votePollRate } from '../actions'
+import RatingOption from '../../../../components/ui/rating-option'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Switch } from '@/components/ui/switch'
 
 const PollSchema = object({
 	votedOptions: union([
 		array(optional(boolean())),
 		string(),
 		array(
-			optional(
+			nullish(
 				pipe(
 					number(),
-					custom<number>(n => (n as number) >= 1 || (n as number) <= 5)
+					transform(v => (v < 1 || v > 5 ? undefined : v))
+					// custom<number>(n => (n as number) >= 1 || (n as number) <= 5)
 				)
 			)
 		),
@@ -60,12 +71,12 @@ const PollSchema = object({
 		object({
 			has: literal(false),
 			optionText: optional(string()),
-			rating: optional(number()),
+			rating: nullish(number()),
 		}),
 		object({
 			has: literal(true),
 			optionText: pipe(string(), nonEmpty("Label can't be empty")),
-			rating: optional(number()),
+			rating: nullish(number()),
 		}),
 	]),
 })
@@ -80,14 +91,18 @@ export function PollForm({
 	userIdentifier?: string
 }) {
 	const [pollData, setPollData] = useState(pollDataProp)
+	console.log('pollData', pollData)
 
 	const [isPending, startTransition] = useTransition()
 
+	const [expandAll, setExpandAll] = useState(false)
+
 	const [optimisticPollData, addOptimisticPollData] = useOptimistic<
 		PollData,
-		number | number[]
+		number | number[] | [number, 1 | 2 | 3 | 4 | 5][]
 	>(pollData, (currPollData, votedOption) => {
 		if (typeof votedOption === 'number') {
+			// case of single
 			return {
 				...currPollData,
 				options: currPollData.options.map(opt => {
@@ -114,11 +129,15 @@ export function PollForm({
 					}
 				}),
 			}
-		} else if (Array.isArray(votedOption)) {
+		} else if (
+			Array.isArray(votedOption) &&
+			(votedOption.length > 0 ? typeof votedOption[0] === 'number' : true)
+		) {
+			// case of multiple
 			return {
 				...currPollData,
 				options: currPollData.options.map(opt => {
-					if (votedOption.includes(opt.index)) {
+					if ((votedOption as number[]).includes(opt.index)) {
 						return {
 							...opt,
 							voteRateCount: opt.isVoted
@@ -141,6 +160,44 @@ export function PollForm({
 					}
 				}),
 			}
+		} else if (
+			Array.isArray(votedOption) &&
+			(votedOption.length > 0 ? Array.isArray(votedOption[0]) : true)
+		) {
+			// case of rating
+			return {
+				...currPollData,
+				options: currPollData.options.map(opt => {
+					const sameIndexRating = (
+						votedOption as [number, 1 | 2 | 3 | 4 | 5][]
+					).find(
+						votedOpt => votedOpt[0] === opt.index && votedOpt[1] === opt.rating
+					)
+					if (sameIndexRating) {
+						return {
+							...opt,
+							voteRateCount: opt.isVoted
+								? opt.voteRateCount
+								: opt.voteRateCount
+								? opt.voteRateCount + 1
+								: 1,
+							isVoted: true,
+							rating: sameIndexRating[1],
+						}
+					} else {
+						return {
+							...opt,
+							voteRateCount: opt.isVoted
+								? opt.voteRateCount
+									? opt.voteRateCount - 1
+									: 0
+								: 0,
+							isVoted: false,
+							rating: undefined,
+						}
+					}
+				}),
+			}
 		} else {
 			return currPollData
 		}
@@ -153,14 +210,12 @@ export function PollForm({
 		watch,
 		setValue,
 		getValues,
+		setError,
 		formState: { isSubmitting, isSubmitted, errors },
 	} = useForm<PollForm>({
 		resolver: valibotResolver(PollSchema),
 		defaultValues: {
-			votedOptions:
-				pollData.type === 'multiple'
-					? pollOptionsToFormValue(pollData.options)
-					: pollData.options.find(opt => opt.isVoted)?.index?.toString(),
+			votedOptions: pollOptionsToFormValue(pollData.type, pollData.options),
 			newOption: {
 				has: false,
 				optionText: '',
@@ -172,16 +227,29 @@ export function PollForm({
 			!userIdentifier ||
 			isPending,
 	})
-	// console.log(pollData)
-	// const votedOption = watch(
-	// 	pollData.type === 'multiple' ? 'votedOptions' : 'votedOptions'
-	// )
+
 	const newOption = watch('newOption')
 
 	async function onSubmit(data: PollForm) {
-		console.log(data)
+		console.log('onSubmit', data)
 
+		if (
+			pollData.type === 'rate' &&
+			data.newOption.has &&
+			!data.newOption.rating
+		) {
+			setError('newOption.rating', { message: 'Please select a rating' })
+			return
+		}
 		startTransition(async () => {
+			const newOption = data.newOption.has
+				? {
+						label: data.newOption.optionText,
+						rating:
+							pollData.type === 'rate' ? data.newOption.rating : undefined,
+				  }
+				: undefined
+
 			if (pollData.type === 'single') {
 				if (typeof data.votedOptions !== 'string') {
 					console.error('Invalid voted options')
@@ -194,7 +262,11 @@ export function PollForm({
 					return
 				}
 				addOptimisticPollData(votedOptionIndex)
-				const res = await votePollSingle(pollData.identifier, votedOptionIndex)
+				const res = await votePollSingle(
+					pollData.identifier,
+					votedOptionIndex,
+					newOption as { label: string; rating?: never } | undefined
+				)
 
 				console.log(res)
 				if (!res) return
@@ -231,7 +303,8 @@ export function PollForm({
 				addOptimisticPollData(votedOptionIndexes)
 				const res = await votePollMultiple(
 					pollData.identifier,
-					votedOptionIndexes
+					votedOptionIndexes,
+					newOption as { label: string; rating?: never } | undefined
 				)
 
 				console.log(res)
@@ -250,6 +323,64 @@ export function PollForm({
 				}
 			} else if (pollData.type === 'rate') {
 				console.log('rate', data.votedOptions)
+
+				if (
+					!(
+						Array.isArray(data.votedOptions) &&
+						(data.votedOptions.length > 0
+							? // ? typeof data.votedOptions[0] === 'number' //todo can be undefined
+							  data.votedOptions.every(
+									opt => opt == undefined || typeof opt === 'number'
+							  )
+							: true)
+					)
+				) {
+					console.error('Invalid voted options')
+					return
+				}
+
+				const indexRatingTuples = (data.votedOptions as (number | undefined)[])
+					.map((rating, index) => {
+						if (rating !== undefined && (rating > 5 || rating < 1))
+							throw new Error('Invalid rating')
+						if (rating === undefined) return undefined
+						return [index, rating] as [number, 1 | 2 | 3 | 4 | 5]
+					})
+					.filter(t => t !== undefined)
+
+				if (
+					!(
+						Array.isArray(indexRatingTuples) &&
+						(indexRatingTuples.length > 0
+							? Array.isArray(indexRatingTuples[0])
+							: true)
+					)
+				) {
+					console.error('Invalid voted options')
+					return
+				}
+
+				addOptimisticPollData(indexRatingTuples)
+				const res = await votePollRate(
+					pollData.identifier,
+					indexRatingTuples,
+					newOption as { label: string; rating: 1 | 2 | 3 | 4 | 5 } | undefined
+				)
+
+				console.log(res)
+				if (!res) return
+
+				if (res.success) {
+					setPollData(res.payload)
+				} else {
+					setValue(
+						'votedOptions',
+						data.votedOptions.map(
+							(_, i) => !!pollData.options.find(opt => opt.index === i)?.isVoted
+						)
+					)
+					console.error(res.error)
+				}
 			}
 		})
 	}
@@ -288,13 +419,22 @@ export function PollForm({
 				hasNewOption={newOption.has}
 				setValue={setValue}
 				getValues={getValues}
+				expandAll={expandAll}
 			/>
 		)
 	else OptionList = <span>Unknown poll type</span>
 
 	return (
-		<div>
+		<div className="max-w-screen-sm">
 			<form onSubmit={handleSubmit(onSubmit)}>
+				<div className="flex items-center gap-3">
+					<Switch
+						onCheckedChange={setExpandAll}
+						checked={expandAll}
+						id="expand-all-switch"
+					/>
+					<Label htmlFor="expand-all-switch">Expand all options</Label>
+				</div>
 				{OptionList}
 
 				<Button type="submit" disabled={isSubmitting || !userIdentifier}>
@@ -307,21 +447,48 @@ export function PollForm({
 
 export default PollForm
 
-function pollOptionsToFormValue(options: PollData['options']) {
-	const biggestIndex = options.reduce(
-		(acc, curr) => (curr.index > acc ? curr.index : acc),
-		0
-	)
+function pollOptionsToFormValue(
+	type: PollData['type'],
+	options: PollData['options']
+) {
+	if (type === 'single')
+		return options.find(opt => opt.isVoted)?.index?.toString()
 
-	if (biggestIndex === 0) return []
+	if (type === 'multiple') {
+		const biggestIndex = options.reduce(
+			(acc, curr) => (curr.index > acc ? curr.index : acc),
+			0
+		)
 
-	const valueArr: boolean[] = new Array(biggestIndex).fill(false)
+		if (biggestIndex === 0) return []
 
-	options.forEach(opt => {
-		valueArr[opt.index] = !!opt.isVoted
-	})
+		const valueArr: boolean[] = new Array(biggestIndex).fill(false)
 
-	return valueArr
+		options.forEach(opt => {
+			valueArr[opt.index] = !!opt.isVoted
+		})
+
+		return valueArr
+	}
+
+	if (type === 'rate') {
+		const biggestIndex = options.reduce(
+			(acc, curr) => (curr.index > acc ? curr.index : acc),
+			0
+		)
+
+		if (biggestIndex === 0) return []
+
+		const valueArr: (number | undefined)[] = new Array(biggestIndex)
+
+		options.forEach(opt => {
+			valueArr[opt.index] = opt.rating ?? undefined
+		})
+
+		return valueArr
+	}
+
+	return undefined
 }
 
 function OptionListSingle({
@@ -341,71 +508,104 @@ function OptionListSingle({
 	newOption: PollForm['newOption']
 	pollData: PollData
 }) {
+	const [sortedBy, setSortedBy] = useState<'index' | 'avg'>('index')
+
+	const sortedOptionsByAvg = useMemo(() => {
+		return optimisticPollData.options.slice().sort((a, b) => {
+			if (a.voteRateCount == null) {
+				if (b.voteRateCount == null) {
+					return 0
+				}
+				return -1
+			}
+			if (b.voteRateCount == null) {
+				return -1
+			}
+			return b.voteRateCount - a.voteRateCount
+		})
+	}, [optimisticPollData.options])
+
+	const sortedOptions = {
+		index: optimisticPollData.options,
+		avg: sortedOptionsByAvg,
+	}
 	return (
-		<RadioGroup
-			control={control}
-			onValueChange={v => {
-				if (v === 'new-option') setValue('newOption.has', true)
-				else setValue('newOption.has', false)
-			}}
-			name="votedOptions"
-		>
-			{optimisticPollData.options.map((opt, i) => {
-				return (
-					<div key={opt.label}>
-						<RadioGroupItem
-							id={`poll-option-${opt.index}`}
-							value={opt.index.toString()}
-							className="bg-green-400"
-						/>
-						<Label
-							htmlFor={`poll-option-${opt.index}`}
-							className="cursor-pointer"
-						>
-							{opt.label}{' '}
-							<span className="text-xs text-slate-500">
-								({opt.voteRateCount} votes)
-							</span>
-						</Label>
-					</div>
-				)
-			})}
-
-			{pollData.allowNewOptions && (
-				<div>
-					<div className="flex flex-row">
-						<RadioGroupItem
-							id="poll-option-new"
-							value="new-option"
-							className="bg-green-400"
-							disabled={
-								optimisticPollData.hasCreatedOption ||
-								optimisticPollData.options.length >= 100
-							}
-						/>
-
-						<Input
-							id="poll-new-option"
-							placeholder="New option"
-							className={cn({
-								'border-red-400': !!errors.newOption?.optionText,
-							})}
-							{...register('newOption.optionText', {
-								disabled:
-									!newOption.has ||
-									optimisticPollData.hasCreatedOption ||
-									optimisticPollData.options.length >= 100,
-							})}
-						/>
-					</div>
-					{errors.newOption?.optionText && (
-						<div className="text-red-400 text-xs">
-							{errors.newOption.optionText.message}
+		<div>
+			<Tabs
+				defaultValue="index"
+				className="w-[400px]"
+				onValueChange={v => setSortedBy(v as 'index' | 'avg')}
+			>
+				<TabsList>
+					<TabsTrigger value="index">Sort by index</TabsTrigger>
+					<TabsTrigger value="avg">Sort by vote count</TabsTrigger>
+				</TabsList>
+			</Tabs>
+			<RadioGroup
+				control={control}
+				onValueChange={v => {
+					if (v === 'new-option') setValue('newOption.has', true)
+					else setValue('newOption.has', false)
+				}}
+				name="votedOptions"
+			>
+				{sortedOptions[sortedBy].map((opt, i) => {
+					return (
+						<div key={opt.label}>
+							<RadioGroupItem
+								id={`poll-option-${opt.index}`}
+								value={opt.index.toString()}
+								className="bg-green-400"
+							/>
+							<Label
+								htmlFor={`poll-option-${opt.index}`}
+								className="cursor-pointer"
+							>
+								{opt.label}{' '}
+								<span className="text-xs text-slate-500">
+									({opt.voteRateCount} votes)
+								</span>
+							</Label>
 						</div>
-					)}
-				</div>
-			)}
-		</RadioGroup>
+					)
+				})}
+
+				{pollData.allowNewOptions && (
+					<div>
+						<div className="flex flex-row">
+							<RadioGroupItem
+								id="poll-option-new"
+								value="new-option"
+								className="bg-green-400"
+								disabled={
+									optimisticPollData.hasCreatedOption ||
+									optimisticPollData.options.length >= 100
+								}
+							/>
+
+							<Input
+								id="poll-new-option"
+								placeholder="New option"
+								className={cn({
+									'border-red-400': !!errors.newOption?.optionText,
+								})}
+								{...register('newOption.optionText', {
+									disabled:
+										!newOption.has ||
+										optimisticPollData.hasCreatedOption ||
+										optimisticPollData.options.length >= 100,
+								})}
+							/>
+						</div>
+						{errors.newOption?.optionText && (
+							<div className="text-red-400 text-xs">
+								{errors.newOption.optionText.message}
+							</div>
+						)}
+					</div>
+				)}
+			</RadioGroup>
+		</div>
 	)
 }
 OptionListSingle.displayName = 'OptionListSingle'
@@ -417,6 +617,7 @@ const OptionListRate = ({
 	hasNewOption,
 	setValue,
 	getValues,
+	expandAll = false,
 }: {
 	pollData: PollData
 	optimisticPollData: PollData
@@ -424,18 +625,53 @@ const OptionListRate = ({
 	hasNewOption: PollForm['newOption']['has']
 	setValue: UseFormSetValue<PollForm>
 	getValues: UseFormGetValues<PollForm>
+	expandAll?: boolean
 }) => {
+	const [sortedBy, setSortedBy] = useState<'index' | 'avg'>('index')
+
+	const sortedOptionsByAvg = useMemo(() => {
+		return optimisticPollData.options.slice().sort((a, b) => {
+			if (a.rateAvg == null) {
+				if (b.rateAvg == null) {
+					return 0
+				}
+				return -1
+			}
+			if (b.rateAvg == null) {
+				return -1
+			}
+			return b.rateAvg - a.rateAvg
+		})
+	}, [optimisticPollData.options])
+
+	const sortedOptions = {
+		index: optimisticPollData.options,
+		avg: sortedOptionsByAvg,
+	}
+
 	return (
 		<div>
-			{optimisticPollData.options.map(opt => {
+			<Tabs
+				defaultValue="index"
+				className="w-[400px]"
+				onValueChange={v => setSortedBy(v as 'index' | 'avg')}
+			>
+				<TabsList>
+					<TabsTrigger value="index">Sort by index</TabsTrigger>
+					<TabsTrigger value="avg">Sort by average rating</TabsTrigger>
+				</TabsList>
+			</Tabs>
+			{sortedOptions[sortedBy].map(opt => {
 				return (
 					<RatingOption
 						key={opt.index}
 						optionData={opt}
 						name={`votedOptions.${opt.index}`}
-						onClear={() => setValue(`votedOptions.${opt.index}`, undefined)}
+						onClear={() => setValue(`votedOptions.${opt.index}`, -1)}
 						control={control}
 						getValues={getValues}
+						rateAvg={opt.rateAvg}
+						expand={expandAll}
 					/>
 				)
 			})}
@@ -459,7 +695,7 @@ const OptionListRate = ({
 					<div style={{ display: hasNewOption ? 'block' : 'none' }}>
 						<RatingOption
 							name="newOption"
-							onClear={() => setValue('newOption.rating', undefined)}
+							onClear={() => setValue('newOption.rating', null)}
 							control={control}
 							getValues={getValues}
 							isNewOption
@@ -488,9 +724,40 @@ function OptionListMultiple({
 	newOption: PollForm['newOption']
 	pollData: PollData
 }) {
+	const [sortedBy, setSortedBy] = useState<'index' | 'avg'>('index')
+
+	const sortedOptionsByAvg = useMemo(() => {
+		return optimisticPollData.options.slice().sort((a, b) => {
+			if (a.voteRateCount == null) {
+				if (b.voteRateCount == null) {
+					return 0
+				}
+				return -1
+			}
+			if (b.voteRateCount == null) {
+				return -1
+			}
+			return b.voteRateCount - a.voteRateCount
+		})
+	}, [optimisticPollData.options])
+
+	const sortedOptions = {
+		index: optimisticPollData.options,
+		avg: sortedOptionsByAvg,
+	}
 	return (
-		<>
-			{optimisticPollData.options.map((opt, i) => {
+		<div>
+			<Tabs
+				defaultValue="index"
+				className="w-[400px]"
+				onValueChange={v => setSortedBy(v as 'index' | 'avg')}
+			>
+				<TabsList>
+					<TabsTrigger value="index">Sort by index</TabsTrigger>
+					<TabsTrigger value="avg">Sort by vote count</TabsTrigger>
+				</TabsList>
+			</Tabs>
+			{sortedOptions[sortedBy].map((opt, i) => {
 				return (
 					<div key={opt.label}>
 						<Checkbox
@@ -547,6 +814,6 @@ function OptionListMultiple({
 					)}
 				</div>
 			)}
-		</>
+		</div>
 	)
 }

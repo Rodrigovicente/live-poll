@@ -41,7 +41,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 
 const MAX_OPT_COUNT = 100
 
-const NewPollSchema = object({
+const newPollSchema = object({
 	title: pipe(
 		string(),
 		nonEmpty('Name is required'),
@@ -69,7 +69,7 @@ const NewPollSchema = object({
 	),
 })
 
-export type NewPollForm = InferInput<typeof NewPollSchema>
+export type NewPollForm = InferInput<typeof newPollSchema>
 
 function NewPollForm() {
 	const session = useSession()
@@ -86,7 +86,7 @@ function NewPollForm() {
 		getValues,
 		formState: { errors, isSubmitting, isSubmitted, ...formState },
 	} = useForm<NewPollForm>({
-		resolver: valibotResolver(NewPollSchema),
+		resolver: valibotResolver(newPollSchema),
 		defaultValues: {
 			votingTimeLimit: 30,
 			type: 'single',

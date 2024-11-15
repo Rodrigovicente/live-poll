@@ -36,7 +36,7 @@ export default async function RootLayout({
 			>
 				<AppSessionProvider session={session}>
 					<TopBar />
-					{children}
+					<div className="max-w-screen-lg mx-auto pt-16 px-5">{children}</div>
 				</AppSessionProvider>
 			</body>
 		</html>

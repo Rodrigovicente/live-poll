@@ -57,18 +57,33 @@ export async function getPollDataList(client: Client): Promise<getPollDataListRo
 }
 
 export const getPollDataListFromUserByIdentifierQuery = `-- name: getPollDataListFromUserByIdentifier :many
-SELECT "Poll".identifier AS identifier, "User".identifier AS creator_user_identifier, title, description, type, allow_new_options, required_providers, required_provider_subs, (BOOL_OR(is_closed) OR ends_at < NOW())::BOOLEAN AS is_closed, ends_at, created_at, COUNT("Vote_and_rate".poll_id) AS vote_rate_count
-FROM "Poll"
-LEFT JOIN (
-	SELECT poll_id, option_index FROM "Vote"
+WITH "User_id_cte" AS (
+	SELECT id FROM "User"
+	WHERE identifier = $1
+),
+"Vote_rate_data_cte" AS (
+	SELECT poll_id, user_id, option_index FROM "Vote"
 	UNION ALL
-	SELECT poll_id, option_index FROM "Rate"
+	SELECT poll_id, user_id, option_index FROM "Rate"
+)
+SELECT "User_created_polls".identifier AS identifier, (SELECT $1::VARCHAR) AS creator_user_identifier, title, description, type, allow_new_options, required_providers, required_provider_subs, (BOOL_OR(is_closed) OR ends_at < NOW())::BOOLEAN AS is_closed, ends_at, created_at, COUNT("Vote_and_rate".poll_id) AS vote_rate_count, ("Has_voted".has_voted IS NOT NULL) AS has_voted
+FROM (
+	SELECT id, identifier, creator_user_id, title, description, type, allow_new_options, allow_vote_edit, ends_at, required_providers, required_provider_subs, is_closed, created_at FROM "Poll"
+	WHERE "Poll".creator_user_id = (SELECT id FROM "User_id_cte")
+) AS "User_created_polls"
+LEFT JOIN (
+	SELECT poll_id, option_index FROM "Vote_rate_data_cte"
 	) AS "Vote_and_rate"
-ON "Poll".id = "Vote_and_rate".poll_id
-INNER JOIN "User"
-ON "Poll".creator_user_id = "User".id
-WHERE "User".identifier = $1
-GROUP BY "Poll".id, "User".identifier`;
+ON "User_created_polls".id = "Vote_and_rate".poll_id
+LEFT JOIN (
+	SELECT TRUE AS has_voted, poll_id
+	FROM "Vote_rate_data_cte"
+	WHERE user_id = (SELECT id FROM "User_id_cte")
+	GROUP BY has_voted, poll_id
+) AS "Has_voted"
+ON "User_created_polls".id = "Has_voted".poll_id
+GROUP BY "Has_voted".has_voted, "User_created_polls".id, "User_created_polls".identifier, title, description, type, allow_new_options, required_providers, required_provider_subs, ends_at, created_at
+ORDER BY created_at DESC`;
 
 export interface getPollDataListFromUserByIdentifierArgs {
     identifier: string;
@@ -87,6 +102,7 @@ export interface getPollDataListFromUserByIdentifierRow {
     endsAt: Date;
     createdAt: Date;
     voteRateCount: string;
+    hasVoted: string | null;
 }
 
 export async function getPollDataListFromUserByIdentifier(client: Client, args: getPollDataListFromUserByIdentifierArgs): Promise<getPollDataListFromUserByIdentifierRow[]> {
@@ -108,7 +124,159 @@ export async function getPollDataListFromUserByIdentifier(client: Client, args: 
             isClosed: row[8],
             endsAt: row[9],
             createdAt: row[10],
-            voteRateCount: row[11]
+            voteRateCount: row[11],
+            hasVoted: row[12]
+        };
+    });
+}
+
+export const getOpenPollDataListFromUserByIdentifierQuery = `-- name: getOpenPollDataListFromUserByIdentifier :many
+WITH "User_id_cte" AS (
+	SELECT id FROM "User"
+	WHERE identifier = $1
+),
+"Vote_rate_data_cte" AS (
+	SELECT poll_id, user_id, option_index FROM "Vote"
+	UNION ALL
+	SELECT poll_id, user_id, option_index FROM "Rate"
+)
+SELECT "User_created_polls".identifier AS identifier, (SELECT $1::VARCHAR) AS creator_user_identifier, title, description, type, allow_new_options, required_providers, required_provider_subs, (BOOL_OR(is_closed) OR ends_at < NOW())::BOOLEAN AS is_closed, ends_at, created_at, COUNT("Vote_and_rate".poll_id) AS vote_rate_count, ("Has_voted".has_voted IS NOT NULL) AS has_voted
+FROM (
+	SELECT id, identifier, creator_user_id, title, description, type, allow_new_options, allow_vote_edit, ends_at, required_providers, required_provider_subs, is_closed, created_at FROM "Poll"
+	WHERE "Poll".creator_user_id = (SELECT id FROM "User_id_cte")
+	AND "Poll".is_closed = FALSE
+	AND "Poll".ends_at > NOW()
+) AS "User_created_polls"
+LEFT JOIN (
+	SELECT poll_id, option_index FROM "Vote_rate_data_cte"
+	) AS "Vote_and_rate"
+ON "User_created_polls".id = "Vote_and_rate".poll_id
+LEFT JOIN (
+	SELECT TRUE AS has_voted, poll_id
+	FROM "Vote_rate_data_cte"
+	WHERE user_id = (SELECT id FROM "User_id_cte")
+	GROUP BY has_voted, poll_id
+) AS "Has_voted"
+ON "User_created_polls".id = "Has_voted".poll_id
+GROUP BY "Has_voted".has_voted, "User_created_polls".id, "User_created_polls".identifier, title, description, type, allow_new_options, required_providers, required_provider_subs, ends_at, created_at
+ORDER BY created_at DESC`;
+
+export interface getOpenPollDataListFromUserByIdentifierArgs {
+    identifier: string;
+}
+
+export interface getOpenPollDataListFromUserByIdentifierRow {
+    identifier: string;
+    creatorUserIdentifier: string;
+    title: string;
+    description: string | null;
+    type: string;
+    allowNewOptions: boolean;
+    requiredProviders: string[] | null;
+    requiredProviderSubs: string[] | null;
+    isClosed: boolean;
+    endsAt: Date;
+    createdAt: Date;
+    voteRateCount: string;
+    hasVoted: string | null;
+}
+
+export async function getOpenPollDataListFromUserByIdentifier(client: Client, args: getOpenPollDataListFromUserByIdentifierArgs): Promise<getOpenPollDataListFromUserByIdentifierRow[]> {
+    const result = await client.query({
+        text: getOpenPollDataListFromUserByIdentifierQuery,
+        values: [args.identifier],
+        rowMode: "array"
+    });
+    return result.rows.map(row => {
+        return {
+            identifier: row[0],
+            creatorUserIdentifier: row[1],
+            title: row[2],
+            description: row[3],
+            type: row[4],
+            allowNewOptions: row[5],
+            requiredProviders: row[6],
+            requiredProviderSubs: row[7],
+            isClosed: row[8],
+            endsAt: row[9],
+            createdAt: row[10],
+            voteRateCount: row[11],
+            hasVoted: row[12]
+        };
+    });
+}
+
+export const getClosedPollDataListFromUserByIdentifierQuery = `-- name: getClosedPollDataListFromUserByIdentifier :many
+WITH "User_id_cte" AS (
+	SELECT id FROM "User"
+	WHERE identifier = $1
+),
+"Vote_rate_data_cte" AS (
+	SELECT poll_id, user_id, option_index FROM "Vote"
+	UNION ALL
+	SELECT poll_id, user_id, option_index FROM "Rate"
+)
+SELECT "User_created_polls".identifier AS identifier, (SELECT $1::VARCHAR) AS creator_user_identifier, title, description, type, allow_new_options, required_providers, required_provider_subs, (BOOL_OR(is_closed) OR ends_at < NOW())::BOOLEAN AS is_closed, ends_at, created_at, COUNT("Vote_and_rate".poll_id) AS vote_rate_count, ("Has_voted".has_voted IS NOT NULL) AS has_voted
+FROM (
+	SELECT id, identifier, creator_user_id, title, description, type, allow_new_options, allow_vote_edit, ends_at, required_providers, required_provider_subs, is_closed, created_at FROM "Poll"
+	WHERE "Poll".creator_user_id = (SELECT id FROM "User_id_cte")
+	AND ("Poll".is_closed = TRUE OR "Poll".ends_at < NOW())
+) AS "User_created_polls"
+LEFT JOIN (
+	SELECT poll_id, option_index FROM "Vote_rate_data_cte"
+	) AS "Vote_and_rate"
+ON "User_created_polls".id = "Vote_and_rate".poll_id
+LEFT JOIN (
+	SELECT TRUE AS has_voted, poll_id
+	FROM "Vote_rate_data_cte"
+	WHERE user_id = (SELECT id FROM "User_id_cte")
+	GROUP BY has_voted, poll_id
+) AS "Has_voted"
+ON "User_created_polls".id = "Has_voted".poll_id
+GROUP BY "Has_voted".has_voted, "User_created_polls".id, "User_created_polls".identifier, title, description, type, allow_new_options, required_providers, required_provider_subs, ends_at, created_at
+ORDER BY created_at DESC`;
+
+export interface getClosedPollDataListFromUserByIdentifierArgs {
+    identifier: string;
+}
+
+export interface getClosedPollDataListFromUserByIdentifierRow {
+    identifier: string;
+    creatorUserIdentifier: string;
+    title: string;
+    description: string | null;
+    type: string;
+    allowNewOptions: boolean;
+    requiredProviders: string[] | null;
+    requiredProviderSubs: string[] | null;
+    isClosed: boolean;
+    endsAt: Date;
+    createdAt: Date;
+    voteRateCount: string;
+    hasVoted: string | null;
+}
+
+export async function getClosedPollDataListFromUserByIdentifier(client: Client, args: getClosedPollDataListFromUserByIdentifierArgs): Promise<getClosedPollDataListFromUserByIdentifierRow[]> {
+    const result = await client.query({
+        text: getClosedPollDataListFromUserByIdentifierQuery,
+        values: [args.identifier],
+        rowMode: "array"
+    });
+    return result.rows.map(row => {
+        return {
+            identifier: row[0],
+            creatorUserIdentifier: row[1],
+            title: row[2],
+            description: row[3],
+            type: row[4],
+            allowNewOptions: row[5],
+            requiredProviders: row[6],
+            requiredProviderSubs: row[7],
+            isClosed: row[8],
+            endsAt: row[9],
+            createdAt: row[10],
+            voteRateCount: row[11],
+            hasVoted: row[12]
         };
     });
 }
@@ -228,9 +396,10 @@ WITH "Null_rating" AS (
 	SELECT id FROM "User"
 	WHERE "User".identifier = $2
 )
-SELECT identifier, title, description, type, allow_new_options, allow_vote_edit, required_providers, required_provider_subs, ends_at, (BOOL_OR(is_closed) OR ends_at < NOW())::BOOLEAN AS is_closed, "Poll_with_options".created_at, index, label, COUNT(option_index) AS vote_rate_count, has_created,
+SELECT identifier, title, description, type, allow_new_options, allow_vote_edit, required_providers, required_provider_subs, ends_at, (BOOL_OR(is_closed) OR ends_at < NOW())::BOOLEAN AS is_closed, "Poll_with_options".created_at, index, label, COUNT("Vote_rate_with_hascreated".option_index) AS vote_rate_count, has_created,
 	CASE WHEN "Poll_with_options".type = 'rate' THEN AVG("Vote_rate_with_hascreated".rating) END AS rate_avg,
-	CAST(BOOL_OR(CASE WHEN "Vote_rate_with_hascreated".user_id = (SELECT id FROM "User_id_cte") THEN TRUE ELSE FALSE END) AS BOOLEAN) AS is_voted
+	CAST(BOOL_OR(CASE WHEN "Vote_rate_with_hascreated".user_id = (SELECT id FROM "User_id_cte") THEN TRUE ELSE FALSE END) AS BOOLEAN) AS is_voted,
+	"User_ratings".rating
 FROM (
 	SELECT id, identifier, title, description, type, allow_new_options, allow_vote_edit, required_providers, required_provider_subs, ends_at, is_closed, created_at, index, label
 	FROM "Poll"
@@ -260,7 +429,14 @@ CROSS JOIN
 		LIMIT 1
 	) AS has_created
 ) AS "Has_created_row"
-GROUP BY  id, identifier, title, description, type, allow_new_options, allow_vote_edit, required_providers, required_provider_subs, ends_at, "Poll_with_options".created_at, index, label, "Vote_rate_with_hascreated".option_index, "Has_created_row".has_created
+LEFT JOIN (
+	SELECT poll_id, user_id, option_index, rating
+	FROM "Rate"
+	WHERE poll_id = (SELECT id FROM "Poll_id_cte")	
+	AND user_id = (SELECT id FROM "User_id_cte")
+) AS "User_ratings"
+ON "Vote_rate_with_hascreated".option_index = "User_ratings".option_index
+GROUP BY  id, identifier, title, description, type, allow_new_options, allow_vote_edit, required_providers, required_provider_subs, ends_at, "Poll_with_options".created_at, index, label, "Vote_rate_with_hascreated".option_index, "Has_created_row".has_created, "User_ratings".rating
 ORDER BY "Poll_with_options".index ASC`;
 
 export interface getPollDataWithVotesArgs {
@@ -286,6 +462,7 @@ export interface getPollDataWithVotesRow {
     hasCreated: boolean;
     rateAvg: string | null;
     isVoted: boolean;
+    rating: number;
 }
 
 export async function getPollDataWithVotes(client: Client, args: getPollDataWithVotesArgs): Promise<getPollDataWithVotesRow[]> {
@@ -312,7 +489,8 @@ export async function getPollDataWithVotes(client: Client, args: getPollDataWith
             voteRateCount: row[13],
             hasCreated: row[14],
             rateAvg: row[15],
-            isVoted: row[16]
+            isVoted: row[16],
+            rating: row[17]
         };
     });
 }
@@ -622,6 +800,98 @@ export async function registerSingleVote(client: Client, args: registerSingleVot
     };
 }
 
+export const registerMultipleRatesQuery = `-- name: registerMultipleRates :many
+WITH "user_id_row" AS (
+	SELECT id AS "user_id" FROM "User" WHERE "User".identifier = $1
+),
+"poll_id_row" AS (
+	SELECT id AS "poll_id" FROM "Poll" WHERE "Poll".identifier = $2
+),
+"poll_user_id_row" AS (
+	SELECT "poll_id", "user_id" FROM "poll_id_row"
+	CROSS JOIN "user_id_row"
+),
+"unnested_ratings_array" AS (
+	SELECT 
+   	CAST(data ->> 0 AS SMALLINT) AS option_index,
+   	CAST(data ->> 1 AS SMALLINT) AS rating
+	FROM jsonb_array_elements(to_jsonb($3::SMALLINT[][])) AS x(data)
+),
+"old_rates" AS (
+	SELECT option_index FROM "Rate"
+	WHERE poll_id = (SELECT poll_id FROM "poll_id_row")
+	AND user_id = (SELECT user_id FROM "user_id_row")
+),
+"to_insert_rates" AS (
+	SELECT option_index, rating FROM "unnested_ratings_array"
+	WHERE option_index NOT IN (SELECT option_index FROM "old_rates")
+),
+"to_delete_rates" AS (
+	SELECT option_index FROM "Rate"
+	WHERE poll_id = (SELECT poll_id FROM "poll_id_row")
+	AND user_id = (SELECT user_id FROM "user_id_row")
+	AND option_index NOT IN (SELECT option_index FROM "unnested_ratings_array")
+),
+"deleted_rates" AS (
+	DELETE FROM "Rate"
+	WHERE poll_id = (SELECT poll_id FROM "poll_id_row")
+	AND user_id = (SELECT user_id FROM "user_id_row")
+	AND option_index IN (SELECT option_index FROM "to_delete_rates")
+	RETURNING user_id, poll_id, option_index, rating
+),
+"new_rates" AS (
+	SELECT "option_index", "user_id", "poll_id", "rating"
+	FROM "to_insert_rates"
+	CROSS JOIN "poll_user_id_row"
+),
+"inserted_rates" AS (
+	INSERT INTO "Rate" (user_id, poll_id, option_index, rating)
+	SELECT user_id, poll_id, option_index, rating
+	FROM "new_rates"
+	RETURNING user_id, poll_id, option_index, rating
+),
+"updated_rates" AS (
+	UPDATE "Rate" 
+	SET rating = "unnested_ratings_array".rating
+	FROM "unnested_ratings_array"
+	WHERE "unnested_ratings_array".option_index = "Rate".option_index
+	AND "Rate".poll_id = (SELECT poll_id FROM "poll_id_row")
+	AND "Rate".user_id = (SELECT user_id FROM "user_id_row")
+	RETURNING unnested_ratings_array.option_index, unnested_ratings_array.rating, user_id, poll_id, "Rate".option_index, "Rate".rating
+)
+SELECT "option_index", "user_id", "poll_id", "rating"
+FROM "unnested_ratings_array"
+CROSS JOIN "poll_user_id_row"`;
+
+export interface registerMultipleRatesArgs {
+    userIdentifier: string;
+    pollIdentifier: string;
+    indexRatingPairList: number[][];
+}
+
+export interface registerMultipleRatesRow {
+    optionIndex: number;
+    userId: string;
+    pollId: string;
+    rating: number;
+}
+
+export async function registerMultipleRates(client: Client, args: registerMultipleRatesArgs): Promise<registerMultipleRatesRow[]> {
+    const result = await client.query({
+        text: registerMultipleRatesQuery,
+        values: [args.userIdentifier, args.pollIdentifier, args.indexRatingPairList],
+        rowMode: "array"
+    });
+    return result.rows.map(row => {
+        return {
+            optionIndex: row[0],
+            userId: row[1],
+            pollId: row[2],
+            rating: row[3]
+        };
+    });
+}
+
 export const registerNewOptionQuery = `-- name: registerNewOption :one
 
 
@@ -650,9 +920,9 @@ WITH "user_id_cte" AS (
 ),
 "new_option_creator" AS (
 	INSERT INTO "OptionCreator" (user_id, poll_id, option_index)
-	VALUES ((SELECT id FROM "user_id_cte"),
-			(SELECT id FROM "poll_id_type_cte"),
-			(SELECT index FROM "new_option")
+	VALUES ((SELECT id AS user_id FROM "user_id_cte"),
+			(SELECT id AS poll_id FROM "poll_id_type_cte"),
+			(SELECT index AS option_index FROM "new_option")
 		)
 ),
 "old_vote_delete" AS (
@@ -675,11 +945,11 @@ WITH "user_id_cte" AS (
 ),
 "new_rate" AS (
 	INSERT INTO "Rate" (user_id, poll_id, option_index, rating)
-	SELECT rate_insert_values.id, rate_insert_values.id, index, rating FROM (
+	SELECT user_id, poll_id, option_index, rating FROM (
 		SELECT
-			(SELECT id FROM "user_id_cte"),
-			(SELECT id FROM "poll_id_type_cte"),
-			(SELECT index FROM "new_option"),
+			(SELECT id FROM "user_id_cte") AS "user_id",
+			(SELECT id FROM "poll_id_type_cte") AS "poll_id",
+			(SELECT index FROM "new_option") AS "option_index",
 			(SELECT $4::SMALLINT AS "rating") --rating
 	) AS "rate_insert_values"
 	WHERE

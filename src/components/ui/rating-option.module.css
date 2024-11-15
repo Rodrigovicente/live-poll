@@ -1,0 +1,88 @@
+.starsContainer {
+	@apply flex flex-row-reverse gap-0;
+
+	--active-color: rgb(245, 221, 6);
+
+	& > .starBtn {
+		padding: 0 0.4rem;
+
+		& > .starIcon {
+			transition: scale 0.2s, fill 0.2s, color 0.2s;
+			pointer-events: none;
+		}
+
+		&:disabled {
+			opacity: 0.5;
+		}
+	}
+
+	& > .starBtn.active {
+		& > .starIcon {
+			fill: var(--active-color);
+			color: var(--active-color);
+		}
+
+		& ~ .starBtn {
+			.starIcon {
+				fill: var(--active-color);
+				color: var(--active-color);
+			}
+		}
+	}
+
+	&:hover {
+		& > .starBtn:not(:disabled),
+		& > .starBtn:not(:disabled):not(.active) {
+			& > .starIcon {
+				fill: transparent;
+				color: white;
+				scale: 1;
+			}
+		}
+
+		& > .active:not(:disabled) ~ .starBtn {
+			.starIcon {
+				fill: transparent;
+				color: white;
+				scale: 1;
+			}
+		}
+
+		& > .starBtn:not(:disabled) {
+			&:hover {
+				& > .starIcon,
+				&.active > .starIcon {
+					scale: 1.5;
+					fill: var(--active-color);
+					color: var(--active-color);
+				}
+
+				& ~ .starBtn {
+					& > .starIcon {
+						fill: var(--active-color);
+						color: var(--active-color);
+					}
+				}
+
+				& + .starBtn {
+					& > .starIcon {
+						scale: 1.35;
+					}
+				}
+				& + .starBtn + .starBtn {
+					& > .starIcon {
+						scale: 1.2;
+					}
+				}
+			}
+
+			&:active {
+				& > .starIcon,
+				&.active > .starIcon {
+					scale: 1.35;
+					transition-duration: 0.01s;
+				}
+			}
+		}
+	}
+}

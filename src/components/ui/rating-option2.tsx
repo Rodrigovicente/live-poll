@@ -2,7 +2,7 @@ import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import React, { memo, useRef } from 'react'
 import { Control } from 'react-hook-form'
-import { PollData } from '../page'
+import { PollData } from '../../app/poll/[id]/page'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 

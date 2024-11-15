@@ -4,19 +4,15 @@ import { ApiResponse } from '../api/utils'
 import { getPollListFromUser, PollData } from '@/lib/db/queries/poll'
 
 export async function getPollCardList(
-	userIdentifier: string
+	userIdentifier: string,
+	openFilter: 'open' | 'closed' | 'all' = 'all'
 ): Promise<ApiResponse<PollData[] | null>> {
 	'use server'
 
-	// Simulate slow network
-	await new Promise(resolve => setTimeout(resolve, 1000))
-
 	try {
-		const PollDataList = await getPollListFromUser(userIdentifier)
+		const PollDataList = await getPollListFromUser(userIdentifier, openFilter)
 
 		if (!PollDataList) throw new Error('Failed to fetch poll list.')
-
-		console.log('===>>', PollDataList)
 
 		if (PollDataList.length === 0) {
 			return {

@@ -1,12 +1,15 @@
 'use server'
 
 import pgFormat from 'pg-format'
-import { QueryResult } from 'pg'
+import { PoolClient, QueryResult } from 'pg'
 import pool from '../db'
 import { nanoid } from '@/lib/utils'
 import {
+	getClosedPollDataListFromUserByIdentifier,
+	getOpenPollDataListFromUserByIdentifier,
 	getPollDataListFromUserByIdentifier,
 	getPollDataWithVotes as getPollDataWithVotesSQL,
+	registerMultipleRates,
 	registerMultipleVotes,
 	registerNewOption,
 	registerSingleVote,
@@ -63,7 +66,9 @@ export async function createPoll(newPollData: CreatePollParams) {
 					)
 					INSERT INTO "Poll" (identifier, creator_user_id, title, description, type, allow_new_options, allow_vote_edit, required_providers, required_provider_subs, ends_at)
 					SELECT $1, (SELECT id FROM "Creator_id_row"), $3, $4, $5, $6, $7, $8, $9, $10
-					WHERE (SELECT COUNT(*) FROM "Poll" WHERE "is_closed" = false AND creator_user_id = (SELECT id FROM "Creator_id_row")) < 10 RETURNING "id" AS "poll_id"
+					WHERE (SELECT COUNT(*) FROM "Poll"
+					WHERE creator_user_id = (SELECT id FROM "Creator_id_row")
+					AND ("is_closed" = false AND ends_at > NOW())) < 10 RETURNING "id" AS "poll_id"
 				)
 
 				${sqlOptionsInsert}
@@ -106,14 +111,29 @@ export type GetPollListRow = {
 }
 export type PollData = getPollDataListFromUserByIdentifierRow
 
-export async function getPollListFromUser(userIdentifier: string) {
+export async function getPollListFromUser(
+	userIdentifier: string,
+	openFilter: 'open' | 'closed' | 'all' = 'all'
+) {
 	'use server'
 
 	const client = await pool.connect()
 	try {
-		const pollDataList = await getPollDataListFromUserByIdentifier(client, {
-			identifier: userIdentifier,
-		})
+		let pollDataList
+
+		if (openFilter === 'open') {
+			pollDataList = await getOpenPollDataListFromUserByIdentifier(client, {
+				identifier: userIdentifier,
+			})
+		} else if (openFilter === 'closed') {
+			pollDataList = await getClosedPollDataListFromUserByIdentifier(client, {
+				identifier: userIdentifier,
+			})
+		} else {
+			pollDataList = await getPollDataListFromUserByIdentifier(client, {
+				identifier: userIdentifier,
+			})
+		}
 
 		console.log('getPollListFromUser =>', pollDataList)
 
@@ -156,8 +176,6 @@ export async function getPollDataWithVotes(
 			userIdentifier,
 		})
 
-		console.log('getPollDataWithVotes =>', pollData)
-
 		return {
 			identifier: pollData[0].identifier,
 			title: pollData[0].title,
@@ -177,8 +195,9 @@ export async function getPollDataWithVotes(
 					index: +row.index,
 					label: row.label ?? '',
 					voteRateCount: +row.voteRateCount,
-					rateAvg: row.rateAvg,
+					rateAvg: row.rateAvg != null ? +row.rateAvg : null,
 					isVoted: row.isVoted,
+					rating: row.rating,
 				}
 			}),
 		}
@@ -278,6 +297,10 @@ export type RegisterVoteRow =
 				userIdentifier: string
 				pollIdentifier: string
 				optionIndex: number
+				newOption?: {
+					label: string
+					rating?: never
+				}
 			}
 	  }
 	| {
@@ -286,6 +309,10 @@ export type RegisterVoteRow =
 				userIdentifier: string
 				pollIdentifier: string
 				optionIndex: number[]
+				newOption?: {
+					label: string
+					rating?: never
+				}
 			}
 	  }
 	| {
@@ -293,12 +320,16 @@ export type RegisterVoteRow =
 			data: {
 				userIdentifier: string
 				pollIdentifier: string
-				optionIndex: { index: number; rating: 1 | 2 | 3 | 4 | 5 }[]
+				optionIndex: [number, 1 | 2 | 3 | 4 | 5][]
+				newOption?: {
+					label: string
+					rating: 1 | 2 | 3 | 4 | 5
+				}
 			}
 	  }
 export async function registerVote({
 	type,
-	data: { userIdentifier, pollIdentifier, optionIndex },
+	data: { userIdentifier, pollIdentifier, optionIndex, newOption },
 }: RegisterVoteRow) {
 	'use server'
 
@@ -328,13 +359,49 @@ export async function registerVote({
 				optionIndexList: optionIndex as number[],
 			})
 		} else if (type === 'rate') {
-			if (Array.isArray(optionIndex))
-				throw new Error('optionIndex should be a number')
+			if (
+				!(
+					Array.isArray(optionIndex) &&
+					(optionIndex.length > 0 ? Array.isArray(optionIndex[0]) : true)
+				)
+			)
+				throw new Error(
+					'optionIndex should be a array of [index, rating] tuples'
+				)
 
-			return null
+			voteData = await registerMultipleRates(client, {
+				userIdentifier,
+				pollIdentifier,
+				indexRatingPairList: optionIndex as [number, 1 | 2 | 3 | 4 | 5][],
+			})
 		}
 
 		console.log('registerVote =>', voteData)
+
+		if (newOption) {
+			const newOptionRow = await addNewOption(
+				type === 'rate'
+					? {
+							type,
+							data: {
+								userIdentifier,
+								pollIdentifier,
+								optionLabel: newOption.label,
+								rating: newOption.rating as 1 | 2 | 3 | 4 | 5,
+							},
+					  }
+					: {
+							type,
+							data: {
+								userIdentifier,
+								pollIdentifier,
+								optionLabel: newOption.label,
+							},
+					  },
+				client
+			)
+			console.log('newOptionRow =>', newOptionRow)
+		}
 
 		return voteData
 	} catch (e) {
@@ -353,7 +420,7 @@ export type RegisterNewOptionRow =
 				userIdentifier: string
 				pollIdentifier: string
 				optionLabel: string
-				rating?: never
+				rating?: undefined
 			}
 	  }
 	| {
@@ -366,21 +433,30 @@ export type RegisterNewOptionRow =
 			}
 	  }
 
-export async function addNewOption({
-	type,
-	data: { userIdentifier, pollIdentifier, optionLabel, rating },
-}: RegisterNewOptionRow) {
+export async function addNewOption(
+	{
+		type,
+		data: { userIdentifier, pollIdentifier, optionLabel, rating },
+	}: RegisterNewOptionRow,
+	client?: PoolClient
+) {
 	'use server'
 
-	const client = await pool.connect()
+	let isPassedClient = true
+
+	if (!client) {
+		client = await pool.connect()
+		isPassedClient = false
+	}
+
 	try {
 		let voteData
 
-		if (userIdentifier.length < 0)
+		if (userIdentifier.length <= 0)
 			throw new Error('userIdentifier should be a non-empty string')
-		if (pollIdentifier.length < 0)
+		if (pollIdentifier.length <= 0)
 			throw new Error('pollIdentifier should be a non-empty string')
-		if (optionLabel.length < 0)
+		if (optionLabel.length <= 0)
 			throw new Error('optionLabel should be a non-empty string')
 
 		if (type === 'single' || type === 'multiple') {
@@ -410,6 +486,6 @@ export async function addNewOption({
 
 		return null
 	} finally {
-		client.release()
+		if (!isPassedClient) client.release()
 	}
 }

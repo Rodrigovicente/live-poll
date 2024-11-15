@@ -9,7 +9,13 @@ import {
 } from './ui/card'
 import Link from 'next/link'
 import { PollData } from '@/lib/db/queries/poll'
-import { secToHours } from '@/lib/utils'
+import { cn, secToHours } from '@/lib/utils'
+import { CheckCircleIcon } from 'lucide-react'
+import PollMultipleIcon from './icons/poll-multiple-icon'
+import { Separator } from './ui/separator'
+import { getFormattedPollType } from '@/app/poll/utils'
+import PollSingleIcon from './icons/poll-single-icon'
+import PollRateIcon from './icons/poll-rate-icon'
 
 export type PollCardData = {
 	identifier: string
@@ -36,6 +42,7 @@ function PollCard({
 		endsAt,
 		createdAt,
 		voteRateCount,
+		hasVoted,
 	},
 }: {
 	pollData: PollData
@@ -70,23 +77,51 @@ function PollCard({
 			</div>
 		)
 
+	let pollIcons
+	if (type === 'single') {
+		pollIcons = <PollSingleIcon size={22} className="text-card-foreground" />
+	} else if (type === 'multiple') {
+		pollIcons = <PollMultipleIcon size={22} className="text-card-foreground" />
+	} else {
+		pollIcons = <PollRateIcon size={22} className="text-card-foreground" />
+	}
+
 	return (
 		<Link href={`/poll/${identifier}`}>
-			<Card className={isClosed ? 'opacity-70' : ''}>
-				<CardHeader>
-					<CardTitle>{title}</CardTitle>
-					<CardDescription>{description}</CardDescription>
-				</CardHeader>
-				{/* <CardContent>
-				<p>Card Content</p>
-			</CardContent> */}
-				<CardFooter>
-					<div>
-						<div>Votes: {voteRateCount}</div>
-						<div>{timeToEnd}</div>
-						<div>{type}</div>
-					</div>
-				</CardFooter>
+			<Card
+				className={cn(
+					'flex flex-row items-stretch gap-3 hoverable',
+					isClosed ? 'disabled' : ''
+				)}
+			>
+				<div className="flex grow-0 flex-col items-center justify-start gap-4">
+					{pollIcons}
+					{hasVoted && (
+						<CheckCircleIcon size={18} className="text-card-muted-foreground" />
+					)}
+				</div>
+				<div className="my-auto">
+					<CardHeader>
+						<CardTitle>{title}</CardTitle>
+						<CardDescription>
+							<div className="flex flex-row gap-3">
+								<span>{getFormattedPollType(type)}</span>
+								<span>•</span>
+								<span>{timeToEnd}</span>
+								<span>•</span>
+								<span>
+									{voteRateCount} {type === 'rate' ? 'ratings' : 'votes'}
+								</span>
+							</div>
+						</CardDescription>
+					</CardHeader>
+					{description && (
+						<CardContent>
+							<p className="line-clamp-3">{description}</p>
+						</CardContent>
+					)}
+					{/* <CardFooter></CardFooter> */}
+				</div>
 			</Card>
 		</Link>
 	)

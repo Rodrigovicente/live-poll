@@ -32,8 +32,6 @@ export async function getPollWithVotes(
 
 		if (!pollData) throw new Error('Failed to fetch poll data with votes.')
 
-		console.log('===>>', pollData)
-
 		if (!pollData) {
 			return {
 				success: false,
@@ -76,7 +74,11 @@ export async function getPollWithVotes(
 
 export async function votePollSingle(
 	pollIdentifier: string,
-	optionIndex: number
+	optionIndex: number,
+	newOption?: {
+		label: string
+		rating?: never
+	}
 ): Promise<ApiResponse<PollData>> {
 	const session: (Session & { identifier: string }) | null =
 		await getServerSession(authOptions)
@@ -87,7 +89,7 @@ export async function votePollSingle(
 	try {
 		const voteRow = await registerVote({
 			type: 'single',
-			data: { pollIdentifier, userIdentifier, optionIndex },
+			data: { pollIdentifier, userIdentifier, optionIndex, newOption },
 		})
 
 		if (!voteRow) {
@@ -123,7 +125,11 @@ export async function votePollSingle(
 
 export async function votePollMultiple(
 	pollIdentifier: string,
-	optionIndex: number[]
+	optionIndex: number[],
+	newOption?: {
+		label: string
+		rating?: never
+	}
 ): Promise<ApiResponse<PollData>> {
 	const session: (Session & { identifier: string }) | null =
 		await getServerSession(authOptions)
@@ -134,7 +140,7 @@ export async function votePollMultiple(
 	try {
 		const voteRow = (await registerVote({
 			type: 'multiple',
-			data: { pollIdentifier, userIdentifier, optionIndex },
+			data: { pollIdentifier, userIdentifier, optionIndex, newOption },
 		})) as registerMultipleVotesRow[]
 
 		if (!voteRow) {
@@ -163,6 +169,62 @@ export async function votePollMultiple(
 			success: false,
 			error: {
 				message: 'Failed to insert vote.',
+			},
+		}
+	}
+}
+
+export async function votePollRate(
+	pollIdentifier: string,
+	indexRatingPairList: [number, 1 | 2 | 3 | 4 | 5][],
+	newOption?: {
+		label: string
+		rating: 1 | 2 | 3 | 4 | 5
+	}
+): Promise<ApiResponse<PollData>> {
+	const session: (Session & { identifier: string }) | null =
+		await getServerSession(authOptions)
+	const userIdentifier = session?.identifier
+
+	if (!userIdentifier) return redirect('/')
+
+	try {
+		const voteRow = (await registerVote({
+			type: 'rate',
+			data: {
+				pollIdentifier,
+				userIdentifier,
+				optionIndex: indexRatingPairList,
+				newOption,
+			},
+		})) as registerMultipleVotesRow[]
+
+		if (!voteRow) {
+			return {
+				success: false,
+				error: {
+					message: 'Failed to insert ratings.',
+				},
+			}
+		}
+
+		const updatedPollData = await getPollWithVotes(
+			pollIdentifier,
+			userIdentifier
+		)
+
+		if (!updatedPollData.success)
+			updatedPollData.error.message =
+				'Failed to fetch poll data with ratings after voting.'
+
+		return updatedPollData
+	} catch (e) {
+		console.error(e)
+
+		return {
+			success: false,
+			error: {
+				message: 'Failed to insert rating.',
 			},
 		}
 	}

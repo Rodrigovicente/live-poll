@@ -15,18 +15,16 @@ async function Dashboard() {
 		return null
 	}
 
-	const response = await getPollCardList(session?.identifier)
+	// const response = await getPollCardList(session?.identifier, 'open')
 
-	const pollCardList = response.success ? response.payload : null
+	// const pollCardList = response.success ? response.payload : null
+	const pollCardList = null
 
 	return (
-		<>
-			<div>Home</div>
-			<Button asChild>
-				<Link href="/new">NEW POLL</Link>
-			</Button>
+		<div className="mt-12">
+			<h1 className="mb-11 text-3xl font-bold text-center">Your Poll List</h1>
 			<PollCardList pollDataList={pollCardList} />
-		</>
+		</div>
 	)
 }
 
